@@ -50,6 +50,11 @@ class RelayWebTests(unittest.TestCase):
         self.assertIn("draftRange=range.cloneRange()", source)
         self.assertIn("savedRanges.push(draftRange)", source)
 
+    def test_web_can_bind_to_explicit_tailnet_host_without_changing_default_loopback(self):
+        source = WEB.read_text()
+        self.assertIn('p.add_argument("--host",default="127.0.0.1")', source)
+        self.assertIn("ThreadingHTTPServer((args.host,args.port),Handler)", source)
+
     def test_shared_feedback_is_default_off_and_owner_projected_only(self):
         source = WEB.read_text()
         self.assertIn("id=shared", source)
