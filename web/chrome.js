@@ -44,6 +44,8 @@ async function submit() {
     const body = await response.json(); if (!response.ok) throw Error(body.error); $('status').textContent = `Submitted Result ${body.result_id}`;
   } catch (error) { $('status').textContent = `Error: ${error.message}`; }
 }
+function openDiagram(svg) { $('diagram-stage').innerHTML = svg; $('diagram-lightbox').hidden = false; }
+window.openDiagram = openDiagram;
 function boot() {
   $('handle').onclick = () => document.body.classList.toggle('collapsed');
   $('identity-confirm').onclick = () => setIdentity($('identity-name').value);

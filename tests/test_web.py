@@ -25,6 +25,14 @@ class RelayWebTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
 
+    def test_markdown_renderer_is_scoped_so_chrome_script_can_boot(self):
+        source = WEB.read_text()
+        self.assertIn("<script>(()=>", source)
+        self.assertIn("})();</script>", source)
+        chrome = (ROOT / "web" / "chrome.js").read_text()
+        self.assertIn("function openDiagram", chrome)
+        self.assertIn("window.openDiagram", chrome)
+
     def test_chrome_assets_keep_human_review_interaction_and_relay_boundary(self):
         html = (ROOT / "web" / "chrome.html").read_text()
         css = (ROOT / "web" / "chrome.css").read_text()
