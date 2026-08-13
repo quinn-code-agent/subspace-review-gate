@@ -1,0 +1,43 @@
+/* Ported layout/token baseline from Human Review chrome; transport remains Subspace + Relay. */
+:root {
+  --canvas: #eceae4;
+  --rail: #fbfaf7;
+  --card: #ffffff;
+  --card-border: #e9e7e0;
+  --hair: #e4e2db;
+  --strong-border: #d9d5c9;
+  --txt: #26241e;
+  --mute: #8b877d;
+  --faint: #b6b2a8;
+  --soft: #f2f0ea;
+  --chip: #f4f2ec;
+  --input-bg: #fdfcfa;
+  --focus: #c2beb4;
+  --amber: #c99500;
+  --btn-bg: #1b1a16;
+  --btn-fg: #fbfaf7;
+  --rail-w: 352px;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { background: var(--canvas); color: var(--txt); font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; }
+.app { display: flex; height: 100vh; }
+.stage { flex: 1; min-width: 0; overflow: auto; background: var(--canvas); }
+.handle { position: fixed; top: 50%; right: var(--rail-w); z-index: 40; width: 22px; height: 46px; margin-top: -23px; border: 1px solid var(--hair); border-right: 0; border-radius: 7px 0 0 7px; background: var(--rail); color: var(--mute); cursor: pointer; }
+.rail { flex: none; width: var(--rail-w); display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--hair); background: var(--rail); }
+body.collapsed .rail { width: 0; border-left-width: 0; }
+body.collapsed .handle { right: 0; }
+.rail-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 12px 12px; }
+.rail-head { display: flex; align-items: baseline; gap: 7px; padding: 0 4px 9px; }
+.section { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); }
+.dim { color: var(--faint); font-size: 11px; }
+.compose, .comment { padding: 13px 14px; border: 1px solid var(--card-border); border-radius: 8px; background: var(--card); }
+.compose { border-color: var(--strong-border); box-shadow: 0 4px 14px -8px rgba(27,26,22,.3); }
+.cards { display: flex; flex-direction: column; gap: 8px; }
+.comment.active { box-shadow: inset 2px 0 0 #e0a800; }
+.rail-foot { border-top: 1px solid var(--hair); padding: 12px; }
+::selection { background: rgba(245,196,0,.42); }
+::highlight(subspace-draft) { background: rgba(245,196,0,.42); }
+::highlight(subspace-saved) { background: rgba(245,196,0,.25); }
+@media (max-width: 800px) { .rail, .handle { display: none; } }
