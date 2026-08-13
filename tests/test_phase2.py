@@ -30,6 +30,18 @@ class Phase2ResultTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_annotations_preserve_immutable_suggestion_kind(self):
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            artifact = temp / "artifact.html"; artifact.write_text("<p>Hello</p>")
+            digest = __import__("hashlib").sha256(artifact.read_bytes()).hexdigest()
+            briefing = temp / "briefing.json"; briefing.write_text(__import__("json").dumps({"type":"Briefing","version":"1","id":"briefing:" + "a" * 32,"artifacts":[{"id":"artifact:one","uri":"artifact.html","mediaType":"text/html","rev":"sha256:" + digest}]}))
+            feedback = temp / "feedback.json"; feedback.write_text(__import__("json").dumps({"comments":[{"quote":"Hello","feedback":"Use a friendlier greeting","kind":"suggestion"}]}))
+            output = temp / "review.jsonl"
+            result = subprocess.run([sys.executable, str(ROOT / "bin" / "subspace-review-relay"), "annotations", "--briefing", str(briefing), "--feedback", str(feedback), "--reviewer", "person:kc", "--output", str(output)], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(__import__("json").loads(output.read_text())["kind"], "suggestion")
+
     def test_build_feedback_result_uses_subspace_result_shape_and_forbids_resolution(self):
         output = self.root / "result.json"
         result = run("build-feedback-result", "--briefing", str(self.briefing), "--review", str(self.review), "--actor", "person:reviewer", "--output", str(output))

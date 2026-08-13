@@ -52,7 +52,7 @@ class RelayWebTests(unittest.TestCase):
             self.assertIn(marker, html)
         for marker in ('data-theme="dark"', '.remove', '.body-edit', '.toast', '.send:disabled', '@media (prefers-reduced-motion: reduce)'):
             self.assertIn(marker, css)
-        for marker in ('themeKey', 'toggleTheme', 'editComment', 'deleteComment', 'activateComment', 'keydown', 'Escape', 'Enter', 'showTeamFeedback', 'kind: "comment"'):
+        for marker in ('themeKey', 'toggleTheme', 'editComment', 'deleteComment', 'activateComment', 'keydown', 'Escape', 'Enter', 'showTeamFeedback', 'kind = "comment"'):
             self.assertIn(marker, js)
         self.assertNotIn('/api/page/', js)
         self.assertNotIn('artifact.innerHTML =', js)

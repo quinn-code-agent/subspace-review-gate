@@ -364,7 +364,8 @@ def annotations(args):
         selector = {"type": "TextQuoteSelector", "exact": quote}
         for key in ("prefix", "suffix"):
             if isinstance(comment.get(key), str) and comment[key]: selector[key] = comment[key]
-        entries.append({"type": "Annotation", "id": annotation_id(index, body), "briefing": briefing["id"], "by": actor, "at": now(), "target": artifact, "selectors": [selector], "kind": "comment", "body": body})
+        kind = comment.get("kind") if comment.get("kind") in ("comment", "suggestion") else "comment"
+        entries.append({"type": "Annotation", "id": annotation_id(index, body), "briefing": briefing["id"], "by": actor, "at": now(), "target": artifact, "selectors": [selector], "kind": kind, "body": body})
     note = feedback.get("overall_note")
     if isinstance(note, str) and note.strip():
         entries.append({"type": "Annotation", "id": annotation_id(len(entries) + 1, note), "briefing": briefing["id"], "by": actor, "at": now(), "target": artifact, "kind": "comment", "body": note.strip()})
