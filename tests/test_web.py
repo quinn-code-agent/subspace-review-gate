@@ -15,6 +15,13 @@ class RelayWebTests(unittest.TestCase):
         self.assertIn("Relay-backed", result.stdout)
         self.assertIn("feedback-only", result.stdout)
 
+    def test_markdown_artifacts_render_with_markdown_and_mermaid_viewer(self):
+        source = WEB.read_text()
+        self.assertIn("marked", source)
+        self.assertIn("mermaid", source)
+        self.assertIn("class=\"mermaid\"", source)
+        self.assertIn("markdown-content", source)
+
     def test_shared_feedback_is_default_off_and_owner_projected_only(self):
         source = WEB.read_text()
         self.assertIn("id=shared", source)
