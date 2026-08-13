@@ -33,6 +33,26 @@ def shared_annotations(briefing_id,endpoint,state):
 def reviewer_state(root,reviewer):
  if not re.fullmatch(r'person:[A-Za-z0-9._@-]{1,128}',reviewer): raise ValueError('reviewer must use person:<stable-name>')
  return root/'reviewers'/hashlib.sha256(reviewer.encode()).hexdigest()[:24]
+def page(briefing, raw, media):
+    """Render the separated Human Review chrome with Relay-only transport."""
+    artifact = briefing["artifacts"][0]
+    chrome_dir = ROOT / "web"
+    template = (chrome_dir / "chrome.html").read_text()
+    chrome_css = (chrome_dir / "chrome.css").read_text()
+    chrome_js = (chrome_dir / "chrome.js").read_text()
+    if media == "text/markdown":
+        content = '<article id="artifact" class="markdown-content">Loading document…</article>'
+        renderer = '''const source=__SOURCE__;const esc=(s)=>{const d=document.createElement("div");d.textContent=s;return d.innerHTML};const md=new marked.Marked({gfm:true});md.use({renderer:{code(t){return t.lang==='mermaid'?`<pre class="mermaid">${esc(t.text)}</pre>`:false}}});artifact.innerHTML=md.parse(source);mermaid.initialize({startOnLoad:false,theme:"neutral",securityLevel:"strict"});mermaid.run({nodes:document.querySelectorAll(".mermaid")}).then(()=>document.querySelectorAll(".mermaid svg").forEach(x=>x.onclick=()=>openDiagram(x.outerHTML)));'''
+        renderer = '<script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/lib/marked.umd.min.js"></script><script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script><script>' + renderer + '</script>'
+    else:
+        content = f'<div id="artifact">{raw}</div>'
+        renderer = ""
+    return (template.replace("__CHROME_CSS__", chrome_css).replace("__CHROME_JS__", chrome_js)
+            .replace("__REVISION__", html.escape(artifact["rev"])).replace("__QUESTION__", html.escape(briefing["question"]))
+            .replace("__ARTIFACT__", content).replace("__RENDERER__", renderer)
+            .replace("__SOURCE__", json.dumps(raw).replace("</", "<\\/")))
+
+
 def main():
  p=argparse.ArgumentParser(description='Relay-backed Subspace Web reviewer (feedback-only; no Human Review protocol).');p.add_argument('open',nargs='?');p.add_argument('--briefing',required=True);p.add_argument('--endpoint',default='https://subspace-relay-staging.netlify.app');p.add_argument('--state-dir');p.add_argument('--owner-state-dir');p.add_argument('--shared-feedback',action='store_true');p.add_argument('--port',type=int,default=0);p.add_argument('--no-browser',action='store_true');args=p.parse_args()
  if args.open!='open': p.error('expected: open')

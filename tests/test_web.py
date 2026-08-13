@@ -25,6 +25,17 @@ class RelayWebTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
 
+    def test_chrome_assets_keep_human_review_interaction_and_relay_boundary(self):
+        html = (ROOT / "web" / "chrome.html").read_text()
+        css = (ROOT / "web" / "chrome.css").read_text()
+        js = (ROOT / "web" / "chrome.js").read_text()
+        for marker in ("class=\"stage\"", "class=\"handle\"", "class=\"rail\"", "class=\"rail-scroll\"", "id=\"compose\"", "class=\"cards\"", "class=\"rail-foot\""):
+            self.assertIn(marker, html)
+        for marker in ("--canvas: #eceae4", "--rail-w: 352px", "rgba(245,196,0,.42)", "subspace-saved"):
+            self.assertIn(marker, css)
+        for marker in ("/api/submit", "Annotation", "feedback-only", "localStorage", "CSS.highlights", "Jump to"):
+            self.assertIn(marker, js)
+
     def test_annotation_draft_keeps_artifact_range_when_composer_focus_changes_selection(self):
         source = WEB.read_text()
         self.assertIn("artifact.contains(candidate.commonAncestorContainer)", source)
