@@ -32,6 +32,8 @@ hermes plugins enable subspace-review-gate
 
 Restart a new Hermes session after enabling it. The plugin registers the `subspace_review_gate` toolset and installs the `subspace-review-gate` skill.
 
+For a clean Hermes host, follow the [setup guide for Hermes agents](docs/setup-for-hermes-agents.md). For the authority boundaries, runtime topology, and Mermaid diagrams, read [architecture](docs/architecture.md).
+
 ## Quick start
 
 Create an artifact first, then create a Briefing:
