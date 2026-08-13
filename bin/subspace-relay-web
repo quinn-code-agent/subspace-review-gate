@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 import sys
-import uuid
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -26,25 +26,50 @@ def run(*args):
 def page(briefing, artifact_text, media_type):
     question = html.escape(briefing["question"])
     artifact = briefing["artifacts"][0]
-    markdown = media_type == "text/markdown"
-    if markdown:
+    if media_type == "text/markdown":
         content = '<article id="artifact" class="markdown-content">Loading document…</article>'
-        renderer = '<script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/lib/marked.umd.min.js"></script><script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script><script>const markdownSource=__MARKDOWN_JSON__;const renderer=new marked.Marked({breaks:false,gfm:true});renderer.use({renderer:{code(token){if(token.lang===\'mermaid\')return `<pre class="mermaid">${escapeHtml(token.text)}</pre>`;return false}}});document.getElementById("artifact").innerHTML=renderer.parse(markdownSource);mermaid.initialize({startOnLoad:false,theme:"neutral",securityLevel:"strict"});mermaid.run({nodes:document.querySelectorAll(".mermaid")});</script>'
-    else:
-        content = f"<div id='artifact'>{artifact_text}</div>"; renderer = ""
-    template = '''<!doctype html><meta charset=utf-8><title>Subspace Web Review</title>
-<style>body{margin:0;display:grid;grid-template-columns:minmax(0,1fr) 340px;font:15px system-ui;background:#f5f5f2;color:#202124}main{padding:48px;max-width:960px}aside{background:#17212b;color:#fff;padding:24px;position:sticky;top:0;height:100vh;box-sizing:border-box}textarea,input{width:100%;box-sizing:border-box;padding:8px}textarea{height:100px}button{padding:10px 14px;border:0;border-radius:6px;background:#7dd3fc;color:#082f49;font-weight:700;cursor:pointer}small{color:#b9c6d0}.comment{border-left:3px solid #7dd3fc;padding:8px;margin:12px 0;background:#223140}.markdown-content{font:17px/1.75 Georgia,serif;color:#252525}.markdown-content h1,.markdown-content h2,.markdown-content h3{font-family:ui-sans-serif,system-ui;line-height:1.2;margin-top:2.2em}.markdown-content h1{font-size:2.35em}.markdown-content h2{border-bottom:1px solid #ddd;padding-bottom:.35em}.markdown-content pre{overflow:auto;padding:18px;background:#f0f0ed;border-radius:8px}.markdown-content code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.markdown-content table{border-collapse:collapse;width:100%}.markdown-content td,.markdown-content th{border:1px solid #ddd;padding:8px;text-align:left}.mermaid{background:#fff!important;text-align:center}</style>
-<main><p><small>Immutable artifact · __REV__</small></p><h1>__QUESTION__</h1>__CONTENT__</main>
-<aside><h2>Feedback</h2><p><small>Declare your reviewer identity before adding feedback. The review service maintains a separate Relay device receipt per declared identity; the receipt is never sent to the browser.</small></p><label><small>Reviewer identity</small><input id=reviewer placeholder='person:your-name' autocomplete=off></label><p><button id=shared>Show team feedback</button></p><div id=team hidden></div><p><small>Select text in the artifact, then write a comment. Send creates a Subspace Annotation-only Review v1 Result and submits it to Relay.</small></p><p id=selection><small>No text selected</small></p><textarea id=body placeholder='Comment on the selected text'></textarea><p><button id=add>Add annotation</button></p><div id=comments></div><hr><textarea id=note placeholder='Optional overall note'></textarea><p><button id=send>Send Subspace Result</button></p><p id=status><small>Feedback-only: no Resolution or workflow action.</small></p></aside>
+        renderer = '''<script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/lib/marked.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
 <script>
-const comments=[]; let quote=''; const $=id=>document.getElementById(id);
-document.addEventListener('selectionchange',()=>{const s=getSelection().toString().trim(); if(s){quote=s;$('selection').textContent='Selected: '+s.slice(0,160)}});
-$('add').onclick=()=>{const body=$('body').value.trim();if(!quote||!body)return;comments.push({quote,feedback:body});$('body').value='';quote='';$('selection').innerHTML='<small>No text selected</small>';$('comments').innerHTML=comments.map(c=>'<div class=comment><small>'+escapeHtml(c.quote)+'</small><br>'+escapeHtml(c.feedback)+'</div>').join('')};
-$('send').onclick=async()=>{const note=$('note').value.trim(),reviewer=$('reviewer').value.trim();if(!reviewer){$('status').textContent='Enter reviewer identity first.';return}$('status').textContent='Submitting…';try{const r=await fetch('/api/submit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reviewer,comments,overall_note:note})});const d=await r.json();if(!r.ok)throw Error(d.error);$('status').textContent='Submitted Result '+d.result_id}catch(e){$('status').textContent='Error: '+e.message}};
-$('shared').onclick=async()=>{const out=$('team');out.hidden=false;out.textContent='Loading shared feedback…';try{const r=await fetch('/api/shared-feedback');const d=await r.json();if(!r.ok)throw Error(d.error);out.innerHTML=d.annotations.length?d.annotations.map(a=>'<div class=comment><small>'+escapeHtml(a.by)+' · '+escapeHtml(a.quote||'Overall note')+'</small><br>'+escapeHtml(a.body)+'</div>').join(''):'<small>No team feedback yet.</small>'}catch(e){out.innerHTML='<small>'+escapeHtml(e.message)+'</small>'}};
+const markdownSource=__MARKDOWN_JSON__;
+// Mermaid v11 parses this sequence-note form more reliably with a spaced participant list.
+const mermaidSafeSource=markdownSource.replace(/Note over B,Slack: Artifact bytes, question, or route changes<br\\/>require a new Briefing—not an overwrite\\./g,"Note over B, Slack: Changes require a new Briefing");
+const renderer=new marked.Marked({breaks:false,gfm:true});
+renderer.use({renderer:{code(token){if(token.lang==='mermaid')return `<pre class="mermaid">${escapeHtml(token.text)}</pre>`;return false}}});
+document.getElementById("artifact").innerHTML=renderer.parse(mermaidSafeSource);
+mermaid.initialize({startOnLoad:false,theme:"neutral",securityLevel:"strict"});
+mermaid.run({nodes:document.querySelectorAll(".mermaid")}).then(()=>{
+ document.querySelectorAll('.mermaid svg').forEach(svg=>svg.addEventListener('click',()=>openDiagram(svg.outerHTML)));
+});
+</script>'''
+    else:
+        content = f"<div id='artifact'>{artifact_text}</div>"
+        renderer = ""
+    template = '''<!doctype html><meta charset=utf-8><title>Subspace Web Review</title>
+<style>
+:root{color-scheme:light}body{margin:0;display:grid;grid-template-columns:minmax(0,1fr) 350px;font:15px system-ui;background:#f5f5f2;color:#202124}main{padding:48px;max-width:1024px}aside{background:#17212b;color:#fff;padding:24px;position:sticky;top:0;height:100vh;box-sizing:border-box;overflow:auto}textarea,input{width:100%;box-sizing:border-box;padding:9px;border-radius:6px;border:1px solid #9ba9b5}textarea{height:100px}button{padding:10px 14px;border:0;border-radius:6px;background:#7dd3fc;color:#082f49;font-weight:700;cursor:pointer}button.secondary{background:#e2e8f0;color:#17212b}small{color:#b9c6d0}.comment{border-left:3px solid #7dd3fc;padding:8px;margin:12px 0;background:#223140}.markdown-content{font:17px/1.75 Georgia,serif;color:#252525}.markdown-content h1,.markdown-content h2,.markdown-content h3{font-family:ui-sans-serif,system-ui;line-height:1.2;margin-top:2.2em}.markdown-content h1{font-size:2.35em}.markdown-content h2{border-bottom:1px solid #ddd;padding-bottom:.35em}.markdown-content pre{overflow:auto;padding:18px;background:#f0f0ed;border-radius:8px}.markdown-content code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.markdown-content table{border-collapse:collapse;width:100%}.markdown-content td,.markdown-content th{border:1px solid #ddd;padding:8px;text-align:left}.mermaid{background:#fff!important;text-align:center;cursor:zoom-in;border:1px solid #ddd}.mermaid svg{max-width:100%;height:auto}.overlay{position:fixed;inset:0;background:#0b1220c9;z-index:10;display:grid;place-items:center;padding:24px}.overlay[hidden]{display:none}.identity-card{width:min(430px,100%);background:#fff;color:#17212b;border-radius:14px;padding:28px;box-shadow:0 24px 60px #0008}.identity-card h2{margin-top:0}.identity-card label{display:block;margin:18px 0 8px}.identity-card small{color:#52606d}.identity-card button{width:100%;margin-top:18px}.identity-display{padding:10px;background:#223140;border-radius:6px;word-break:break-all}.mermaid-lightbox{z-index:20;cursor:zoom-out}.mermaid-lightbox .diagram-stage{width:min(96vw,1500px);height:min(92vh,1000px);background:#fff;border-radius:12px;padding:24px;overflow:auto;display:grid;place-items:center}.mermaid-lightbox svg{max-width:none;max-height:none;min-width:70vw;min-height:70vh}.row{display:flex;gap:8px;align-items:center}.row button{white-space:nowrap}
+</style>
+<main><p><small>Immutable artifact · __REV__</small></p><h1>__QUESTION__</h1>__CONTENT__</main>
+<aside><h2>Feedback</h2><p><small>Feedback-only: no Resolution or workflow action.</small></p><p><small>Reviewing as</small></p><div class="identity-display" id="identity-current">Not set</div><p><button class="secondary" id="identity-edit">Change name</button></p><input id=reviewer type=hidden><p><button id=shared>Show team feedback</button></p><div id=team hidden></div><p><small>Select text in the artifact, then write a comment. Each send creates a Subspace Annotation-only Review v1 Result.</small></p><p id=selection><small>No text selected</small></p><textarea id=body placeholder="Comment on the selected text"></textarea><p><button id=add>Add annotation</button></p><div id=comments></div><hr><textarea id=note placeholder="Optional overall note"></textarea><p><button id=send>Send Subspace Result</button></p><p id=status><small>Identity is self-declared until it is bound to SSO, Slack, or an invitation.</small></p></aside>
+<div class="overlay" id="identity-cover"><div class="identity-card"><h2>Who is reviewing?</h2><p>Enter your name once. This browser remembers it; you can change it later in the review sidebar.</p><label for="identity-name">Name</label><input id="identity-name" placeholder="KC" autocomplete="name"><p><small id="identity-preview">Will submit as person:&lt;name&gt;</small></p><button id="identity-confirm">Continue to review</button></div></div>
+<div class="overlay mermaid-lightbox" id="diagram-lightbox" hidden><div class="diagram-stage" id="diagram-stage"></div></div>
+<script>
+const comments=[];let quote='';const $=id=>document.getElementById(id);const identityKey='subspace-reviewer-name-v1';
 function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function normalizeIdentity(name){const slug=name.trim().toLowerCase().replace(/\\s+/g,'-').replace(/[^a-z0-9._@-]/g,'').replace(/-+/g,'-').replace(/^-|-$/g,'');return slug?'person:'+slug:''}
+function showIdentity(){const name=localStorage.getItem(identityKey)||'';$('identity-name').value=name;$('identity-preview').textContent=name?'Will submit as '+normalizeIdentity(name):'Will submit as person:<name>';$('identity-cover').hidden=false;$('identity-name').focus()}
+function setIdentity(name){const identity=normalizeIdentity(name);if(!identity){$('identity-preview').textContent='Enter a name using letters or numbers.';return false}localStorage.setItem(identityKey,name.trim());$('reviewer').value=identity;$('identity-current').textContent=identity;$('identity-cover').hidden=true;return true}
+$('identity-name').addEventListener('input',e=>$('identity-preview').textContent=normalizeIdentity(e.target.value)?'Will submit as '+normalizeIdentity(e.target.value):'Will submit as person:<name>');
+$('identity-confirm').onclick=()=>setIdentity($('identity-name').value);$('identity-name').addEventListener('keydown',e=>{if(e.key==='Enter')setIdentity(e.target.value)});$('identity-edit').onclick=showIdentity;showIdentity();
+document.addEventListener('selectionchange',()=>{const s=getSelection().toString().trim();if(s){quote=s;$('selection').textContent='Selected: '+s.slice(0,160)}});
+$('add').onclick=()=>{const body=$('body').value.trim();if(!quote||!body)return;comments.push({quote,feedback:body});$('body').value='';quote='';$('selection').innerHTML='<small>No text selected</small>';$('comments').innerHTML=comments.map(c=>'<div class=comment><small>'+escapeHtml(c.quote)+'</small><br>'+escapeHtml(c.feedback)+'</div>').join('')};
+$('send').onclick=async()=>{const note=$('note').value.trim(),reviewer=$('reviewer').value.trim();if(!reviewer){showIdentity();return}$('status').textContent='Submitting…';try{const r=await fetch('/api/submit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reviewer,comments,overall_note:note})});const d=await r.json();if(!r.ok)throw Error(d.error);$('status').textContent='Submitted Result '+d.result_id}catch(e){$('status').textContent='Error: '+e.message}};
+$('shared').onclick=async()=>{const out=$('team');out.hidden=false;out.textContent='Loading shared feedback…';try{const r=await fetch('/api/shared-feedback');const d=await r.json();if(!r.ok)throw Error(d.error);out.innerHTML=d.annotations.length?d.annotations.map(a=>'<div class=comment><small>'+escapeHtml(a.by)+' · '+escapeHtml(a.quote||'Overall note')+'</small><br>'+escapeHtml(a.body)+'</div>').join(''):'<small>No team feedback yet.</small>'}catch(e){out.innerHTML='<small>'+escapeHtml(e.message)+'</small>'}};
+function openDiagram(svg){$('diagram-stage').innerHTML=svg;$('diagram-lightbox').hidden=false}$('diagram-lightbox').onclick=e=>{if(e.target===$('diagram-lightbox'))$('diagram-lightbox').hidden=true};document.addEventListener('keydown',e=>{if(e.key==='Escape')$('diagram-lightbox').hidden=true});
 </script>__RENDERER__'''
-    return template.replace("__REV__", html.escape(artifact["rev"])).replace("__QUESTION__", question).replace("__CONTENT__", content).replace("__RENDERER__", renderer).replace("__MARKDOWN_JSON__", json.dumps(artifact_text).replace("</", "<\\/"))
+    return (template.replace("__REV__", html.escape(artifact["rev"])).replace("__QUESTION__", question)
+            .replace("__CONTENT__", content).replace("__RENDERER__", renderer)
+            .replace("__MARKDOWN_JSON__", json.dumps(artifact_text).replace("</", "<\\/")))
 
 
 def owner_results(briefing_id, endpoint, state):
@@ -63,11 +88,10 @@ def shared_annotations(briefing_id, endpoint, state):
         run("pull-result", "--briefing", briefing_id, "--result-id", result_id, "--output-dir", str(pulled), "--endpoint", endpoint, "--state-dir", str(state))
         result = json.loads((pulled / "result.json").read_text())
         for annotation in result.get("annotations", []):
-            if annotation.get("type") != "Annotation":
-                continue
-            selectors = annotation.get("selectors") or []
-            quote = selectors[0].get("exact", "") if selectors and isinstance(selectors[0], dict) else ""
-            annotations.append({"by": annotation.get("by", "unknown"), "quote": quote, "body": annotation.get("body", "")})
+            if annotation.get("type") == "Annotation":
+                selectors = annotation.get("selectors") or []
+                quote = selectors[0].get("exact", "") if selectors and isinstance(selectors[0], dict) else ""
+                annotations.append({"by": annotation.get("by", "unknown"), "quote": quote, "body": annotation.get("body", "")})
     return annotations
 
 
@@ -81,47 +105,70 @@ def main():
     parser = argparse.ArgumentParser(description="Relay-backed Subspace Web reviewer (feedback-only; no Human Review protocol).")
     parser.add_argument("open", nargs="?", help="Open a Relay-backed review")
     parser.add_argument("--briefing", required=True)
-    parser.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); parser.add_argument("--state-dir"); parser.add_argument("--owner-state-dir", help="Private Relay owner receipt directory; required only with --shared-feedback.")
+    parser.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app")
+    parser.add_argument("--state-dir")
+    parser.add_argument("--owner-state-dir", help="Private Relay owner receipt directory; required only with --shared-feedback.")
     parser.add_argument("--shared-feedback", action="store_true", help="Enable owner-projected read-only team feedback (default off).")
-    parser.add_argument("--port", type=int, default=0); parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
-    if args.open != "open": parser.error("expected: open")
+    if args.open != "open":
+        parser.error("expected: open")
     state = Path(args.state_dir).resolve() if args.state_dir else Path(os.environ.get("HERMES_HOME", Path.home()/'.hermes')) / "subspace-review-gate" / "web"
     owner_state = Path(args.owner_state_dir).resolve() if args.owner_state_dir else Path(os.environ.get("HERMES_HOME", Path.home()/'.hermes')) / "subspace-review-gate" / "relay"
     shared_feedback_enabled = args.shared_feedback
-    package = state / args.briefing / "package"; review = state / args.briefing / "review.jsonl"; result = state / args.briefing / "result.json"
+    package = state / args.briefing / "package"
     run("fetch", "--briefing", args.briefing, "--endpoint", args.endpoint, "--output-dir", str(package))
-    briefing = json.loads((package / "briefing.json").read_text()); artifact = briefing["artifacts"][0]; raw = (package / artifact["uri"]).read_text()
+    briefing = json.loads((package / "briefing.json").read_text())
+    artifact = briefing["artifacts"][0]
+    raw = (package / artifact["uri"]).read_text()
+
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *_): pass
+        def log_message(self, *_):
+            pass
         def do_GET(self):
             if self.path == "/api/shared-feedback":
                 if not shared_feedback_enabled:
-                    self.send_error(403, "Team feedback is currently hidden by the owner."); return
+                    self.send_error(403, "Team feedback is currently hidden by the owner.")
+                    return
                 try:
-                    body=json.dumps({"annotations":shared_annotations(args.briefing,args.endpoint,owner_state)}).encode()
-                    self.send_response(200); self.send_header("Content-Type","application/json"); self.send_header("Cache-Control","no-store"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+                    body = json.dumps({"annotations": shared_annotations(args.briefing, args.endpoint, owner_state)}).encode()
+                    self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
                 except Exception as exc:
-                    body=json.dumps({"error":str(exc)}).encode(); self.send_response(502); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+                    body = json.dumps({"error": str(exc)}).encode()
+                    self.send_response(502); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
                 return
-            if self.path != "/": self.send_error(404); return
-            data = page(briefing, raw, artifact["mediaType"]).encode(); self.send_response(200); self.send_header("Content-Type","text/html; charset=utf-8"); self.send_header("Content-Length",str(len(data))); self.end_headers(); self.wfile.write(data)
+            if self.path != "/":
+                self.send_error(404)
+                return
+            data = page(briefing, raw, artifact["mediaType"]).encode()
+            self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
         def do_POST(self):
-            if self.path != "/api/submit": self.send_error(404); return
+            if self.path != "/api/submit":
+                self.send_error(404)
+                return
             try:
-                data=json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                reviewer=data.get("reviewer", "")
-                reviewer_root=reviewer_state(state / args.briefing, reviewer)
-                feedback={"comments":data.get("comments",[]),"overall_note":data.get("overall_note","")}
-                feedback_path=reviewer_root / "feedback.json"; feedback_path.parent.mkdir(parents=True,exist_ok=True); feedback_path.write_text(json.dumps(feedback))
-                review=reviewer_root / "review.jsonl"; result=reviewer_root / "result.json"
-                run("annotations","--briefing",str(package/"briefing.json"),"--feedback",str(feedback_path),"--reviewer",reviewer,"--output",str(review))
-                run("build-feedback-result","--briefing",str(package/"briefing.json"),"--review",str(review),"--actor",reviewer,"--output",str(result))
-                submitted=run("submit","--briefing",args.briefing,"--review",str(review),"--result",str(result),"--endpoint",args.endpoint,"--state-dir",str(reviewer_root))
-                response={"result_id":submitted["result_id"]}; body=json.dumps(response).encode(); self.send_response(201); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
+                data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                reviewer = data.get("reviewer", "")
+                reviewer_root = reviewer_state(state / args.briefing, reviewer)
+                feedback = {"comments": data.get("comments", []), "overall_note": data.get("overall_note", "")}
+                feedback_path = reviewer_root / "feedback.json"; feedback_path.parent.mkdir(parents=True, exist_ok=True); feedback_path.write_text(json.dumps(feedback))
+                review = reviewer_root / "review.jsonl"; result = reviewer_root / "result.json"
+                run("annotations", "--briefing", str(package / "briefing.json"), "--feedback", str(feedback_path), "--reviewer", reviewer, "--output", str(review))
+                run("build-feedback-result", "--briefing", str(package / "briefing.json"), "--review", str(review), "--actor", reviewer, "--output", str(result))
+                submitted = run("submit", "--briefing", args.briefing, "--review", str(review), "--result", str(result), "--endpoint", args.endpoint, "--state-dir", str(reviewer_root))
+                body = json.dumps({"result_id": submitted["result_id"]}).encode()
+                self.send_response(201); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
             except Exception as exc:
-                body=json.dumps({"error":str(exc)}).encode(); self.send_response(400); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
-    server=ThreadingHTTPServer(("127.0.0.1",args.port),Handler); url=f"http://127.0.0.1:{server.server_port}/"; print(json.dumps({"ok":True,"url":url,"briefing":args.briefing,"mode":"feedback"}), flush=True);
-    if not args.no_browser: webbrowser.open(url)
+                body = json.dumps({"error": str(exc)}).encode()
+                self.send_response(400); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    url = f"http://127.0.0.1:{server.server_port}/"
+    print(json.dumps({"ok": True, "url": url, "briefing": args.briefing, "mode": "feedback"}), flush=True)
+    if not args.no_browser:
+        webbrowser.open(url)
     server.serve_forever()
-if __name__ == "__main__": main()
+
+if __name__ == "__main__":
+    main()
