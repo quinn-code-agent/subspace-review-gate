@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Create, verify, render, and resolve Subspace Review & Gate v1 Briefings."""
+import argparse
+import datetime as dt
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+
+DECISIONS = {"approve", "revise", "hold"}
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(2)
+
+
+def sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def slug(text):
+    value = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return value or "review"
+
+
+def read_briefing(value):
+    path = Path(value).resolve()
+    try:
+        briefing = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"invalid Briefing: {exc}")
+    if briefing.get("type") != "Briefing" or briefing.get("version") != "1":
+        fail("expected a Subspace Review & Gate v1 Briefing")
+    return path, briefing
+
+
+def routes(briefing):
+    for context in briefing.get("context", []):
+        if context.get("type") == "Routing":
+            return context.get("routes", [])
+    return []
+
+
+def parse_route(value, index):
+    try:
+        decision, label, to = value.split("|", 2)
+    except ValueError:
+        fail("--route must be decision|label|destination")
+    if decision not in DECISIONS or not label.strip() or not to.strip():
+        fail("route needs approve, revise, or hold plus a label and destination")
+    return {"id": f"route:{index}:{slug(label)}", "decision": decision, "label": label.strip(), "to": to.strip()}
+
+
+def create(args):
+    artifact = Path(args.artifact).resolve()
+    if not artifact.is_file():
+        fail(f"artifact not found: {artifact}")
+    briefing_path = Path(args.briefing).resolve()
+    artifact_id = f"artifact:{slug(artifact.stem)}"
+    route_list = [parse_route(value, i + 1) for i, value in enumerate(args.route or [])]
+    if not route_list:
+        route_list = [
+            {"id": "route:1:approve", "decision": "approve", "label": "Accept this revision", "to": "outcome:approved"},
+            {"id": "route:2:revise", "decision": "revise", "label": "Revise this artifact", "to": "outcome:revision"},
+            {"id": "route:3:hold", "decision": "hold", "label": "Park this decision", "to": "outcome:held"},
+        ]
+    briefing = {
+        "type": "Briefing", "version": "1", "id": args.id or f"briefing:{slug(artifact.stem)}",
+        "question": args.question,
+        "artifacts": [{"id": artifact_id, "uri": str(artifact), "mediaType": args.media_type or "text/markdown", "rev": "sha256:" + sha256(artifact)}],
+        "context": [{"id": "routing:outcome", "type": "Routing", "ns": args.namespace, "routes": route_list}],
+    }
+    briefing_path.parent.mkdir(parents=True, exist_ok=True)
+    briefing_path.write_text(json.dumps(briefing, indent=2) + "\n")
+    print(briefing_path)
+
+
+def verify(args):
+    path, briefing = read_briefing(args.briefing)
+    base = path.parent
+    for artifact in briefing["artifacts"]:
+        uri = artifact["uri"]
+        candidate = Path(uri) if Path(uri).is_absolute() else base / uri
+        expected = artifact["rev"]
+        actual = "sha256:" + sha256(candidate) if candidate.is_file() else None
+        if actual != expected:
+            fail(f"digest mismatch for {artifact['id']}: expected {expected}, got {actual or 'missing'}")
+    print(json.dumps({"ok": True, "briefing": briefing["id"], "artifacts": len(briefing["artifacts"]) }))
+
+
+def render_slack(args):
+    _, briefing = read_briefing(args.briefing)
+    lines = [f"*Subspace Review & Gate v1* — `{briefing['id']}`", "", f"*Question:* {briefing['question']}", "", "*Fixed artifacts:*"]
+    lines += [f"• `{item['id']}` — `{item['rev']}`" for item in briefing["artifacts"]]
+    if args.human_review_url:
+        lines += ["", f"*Human Review:* {args.human_review_url}"]
+    lines += ["", "*Decision routes:*"]
+    for index, route in enumerate(routes(briefing), 1):
+        lines.append(f"{index}. *{route['label']}* — {route['decision']} → `{route['to']}`")
+    lines += ["", "Reply with the option number. For revise or hold, include a reason. Slack replies are candidate Resolutions; only an authorized approver's validated Resolution is binding."]
+    print("\n".join(lines))
+
+
+def build_resolution(args):
+    _, briefing = read_briefing(args.briefing)
+    options = routes(briefing)
+    choice = args.choice.strip().lower()
+    matches = []
+    if choice.isdigit() and 1 <= int(choice) <= len(options):
+        matches = [options[int(choice) - 1]]
+    else:
+        for route in options:
+            terms = (route["id"], route["decision"], route["label"].lower())
+            if choice in terms:
+                matches.append(route)
+    if len(matches) != 1:
+        fail("choice does not match exactly one route")
+    route = matches[0]
+    reason = (args.reason or "").strip()
+    if route["decision"] in {"revise", "hold"} and not reason:
+        fail(f"{route['decision']} requires --reason or an included Annotation")
+    now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    annotation = {"type": "Annotation", "id": f"annotation:{slug(route['id'])}", "briefing": briefing["id"], "by": args.by, "at": now, "target": route["id"], "kind": "comment", "body": reason or f"Selected: {route['label']}"}
+    resolution = {"type": "Resolution", "id": f"resolution:{slug(route['id'])}", "briefing": briefing["id"], "by": args.by, "at": now, "decision": route["decision"], "includes": [annotation["id"]]}
+    if reason:
+        resolution["reason"] = reason
+    print(json.dumps({"outcome": "resolved", "route": route, "annotation": annotation, "resolution": resolution}, indent=2))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    create_p = commands.add_parser("create")
+    create_p.add_argument("--artifact", required=True); create_p.add_argument("--question", required=True); create_p.add_argument("--briefing", required=True)
+    create_p.add_argument("--route", action="append"); create_p.add_argument("--id"); create_p.add_argument("--namespace", default="hermes:review-gate"); create_p.add_argument("--media-type")
+    create_p.set_defaults(fn=create)
+    verify_p = commands.add_parser("verify"); verify_p.add_argument("--briefing", required=True); verify_p.set_defaults(fn=verify)
+    slack_p = commands.add_parser("render-slack"); slack_p.add_argument("--briefing", required=True); slack_p.add_argument("--human-review-url"); slack_p.set_defaults(fn=render_slack)
+    resolve_p = commands.add_parser("build-resolution"); resolve_p.add_argument("--briefing", required=True); resolve_p.add_argument("--choice", required=True); resolve_p.add_argument("--reason"); resolve_p.add_argument("--by", default="person:captain"); resolve_p.set_defaults(fn=build_resolution)
+    args = parser.parse_args(); args.fn(args)
+
+if __name__ == "__main__":
+    main()
