@@ -159,6 +159,42 @@ The four corresponding Hermes tools are `subspace_review_gate_relay_package`, `s
 
 Relay share URLs are bearer capabilities: do not publish sensitive artifact bytes. Stage data is separate from production data but is real remote storage and uses real Relay quotas.
 
+## Phase 2 — Relay-backed Subspace Web viewer
+
+`bin/subspace-relay-web` is the replacement direction for Human Review's **transport**. It retains the browser interaction shell—rendered artifact, text selection, comment composition, and Send—but it owns no review protocol.
+
+```text
+Relay fetch + digest verification
+→ browser interaction
+→ Subspace Annotation JSONL
+→ feedback-only Review v1 Result
+→ Relay Result submission
+→ owner-only Result pull
+```
+
+Start a local web shell for a published Briefing:
+
+```bash
+python3 bin/subspace-relay-web open \
+  --briefing briefing:<32-lowercase-hex> \
+  --reviewer person:<reviewer> \
+  --no-browser
+```
+
+The shell fetches and verifies the Relay package before rendering. `Send` creates only `Annotation` entries and a `review-v1-result` with `mode: "feedback"`; it contains no `Resolution` and cannot route a workflow. The reviewer transport receipt is private local state. Owners inspect/pull Relay feedback through their private owner receipt:
+
+```bash
+bin/subspace-review-relay results --briefing briefing:<id>
+bin/subspace-review-relay pull-result \
+  --briefing briefing:<id> --result-id res_<id> --output-dir ./result
+```
+
+### Why this is not the old Human Review protocol
+
+The old path was `Human Review feedback JSON → adapter → Annotation`. Phase 2's Web shell directly writes the Subspace objects and submits their verbatim bytes to Relay. Human Review-specific session, polling, batch, and acknowledgement semantics are absent from the Phase 2 viewer.
+
+**Safety boundary:** Relay accepts and stores Result bytes; it does not interpret route semantics, authorize an approver, mint a binding Resolution, or modify workflow state. Slack remains a separately projected gate UI; an authorized external controller/leg remains the only workflow writer.
+
 ## Slack gate UI
 
 Slack is a projection, not the portable log or workflow writer. The posted message must show:

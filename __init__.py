@@ -107,6 +107,13 @@ def relay_annotations(args, **_):
     return relay_call(*command)
 
 
+def relay_results(args, **_):
+    command = ["results", "--briefing", args["briefing"]]
+    if args.get("endpoint"): command.extend(["--endpoint", args["endpoint"]])
+    if args.get("state_dir"): command.extend(["--state-dir", args["state_dir"]])
+    return relay_call(*command)
+
+
 def schema(name, description, properties, required):
     return {"name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": required}}
 
@@ -137,3 +144,5 @@ def register(ctx):
         schema=schema("subspace_review_gate_relay_fetch", "Fetch and SHA-256 verify a shared Relay package for a Web or TUI viewer. Feedback-only Phase 1.", {**common, "output_dir": {"type": "string"}, **relay_endpoint}, ["briefing", "output_dir"]), handler=relay_fetch)
     ctx.register_tool(name="subspace_review_gate_relay_annotations", toolset="subspace_review_gate", emoji="📝", check_fn=available,
         schema=schema("subspace_review_gate_relay_annotations", "Convert Human Review comments to portable Subspace Annotation JSONL; no Resolution is emitted.", {**common, "feedback": {"type": "string"}, "output": {"type": "string"}, "reviewer": {"type": "string"}}, ["briefing", "feedback", "output"]), handler=relay_annotations)
+    ctx.register_tool(name="subspace_review_gate_relay_results", toolset="subspace_review_gate", emoji="📨", check_fn=available,
+        schema=schema("subspace_review_gate_relay_results", "Owner-only pull of Relay Result summaries. Results remain feedback-only evidence and do not route a workflow.", {**common, **relay_endpoint, "state_dir": {"type": "string"}}, ["briefing"]), handler=relay_results)

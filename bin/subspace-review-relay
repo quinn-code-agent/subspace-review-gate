@@ -162,6 +162,134 @@ def publish(args):
     print(json.dumps({"ok": True, "briefing": briefing["id"], "share_url": response_data["shareUrl"], "receipt": str(receipt_path)}, indent=2))
 
 
+def auth_headers(receipt):
+    return {"X-Subspace-Device": receipt["deviceId"], "Authorization": f"Bearer {receipt['deviceSecret']}"}
+
+
+def owner_results(args):
+    briefing_id = args.briefing
+    if not BRIEFING_ID.fullmatch(briefing_id):
+        fail("Relay results requires Briefing id briefing:<32 lowercase hex>")
+    state = owner_state_dir(args.state_dir)
+    receipt_path = state / "owners" / f"{briefing_id}.json"
+    if not receipt_path.exists():
+        fail("owner receipt is required to pull Relay Results")
+    receipt = load_json(receipt_path, "owner receipt")
+    endpoint = args.endpoint.rstrip("/")
+    request = urllib.request.Request(endpoint + f"/api/briefing/{briefing_id}/results", headers=auth_headers(receipt))
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            payload = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        fail(f"Relay Results pull refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+    except OSError as exc:
+        fail(f"Relay Results pull failed: {exc}")
+    print(json.dumps({"ok": True, "briefing": briefing_id, "results": payload.get("results", []), "listStale": payload.get("listStale", False)}, indent=2))
+
+
+def pull_result(args):
+    briefing_id = args.briefing; result_id = args.result_id
+    if not BRIEFING_ID.fullmatch(briefing_id) or not re.fullmatch(r"res_[a-z2-7]{26}", result_id):
+        fail("valid Briefing and Result ids are required")
+    state = owner_state_dir(args.state_dir); receipt_path = state / "owners" / f"{briefing_id}.json"
+    if not receipt_path.exists(): fail("owner receipt is required to pull Relay Results")
+    receipt = load_json(receipt_path, "owner receipt"); endpoint = args.endpoint.rstrip("/")
+    root = Path(args.output_dir).resolve(); root.mkdir(parents=True, exist_ok=True)
+    headers = auth_headers(receipt)
+    review = fetch_bytes_request(endpoint + f"/api/briefing/{briefing_id}/result/{result_id}/review.jsonl", headers)
+    result = fetch_bytes_request(endpoint + f"/api/briefing/{briefing_id}/result/{result_id}/result.json", headers)
+    (root / "review.jsonl").write_bytes(review); (root / "result.json").write_bytes(result)
+    payload = json.loads(result)
+    if payload.get("type") != "review-v1-result" or payload.get("mode") != "feedback" or payload.get("briefing") != briefing_id:
+        fail("pulled Result is not a feedback-only Review v1 Result for this Briefing")
+    print(json.dumps({"ok": True, "briefing": briefing_id, "result_id": result_id, "review_sha256": hashlib.sha256(review).hexdigest(), "result_sha256": hashlib.sha256(result).hexdigest(), "output_dir": str(root)}, indent=2))
+
+
+def fetch_bytes_request(url, headers):
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=45) as response: return response.read()
+    except urllib.error.HTTPError as exc: fail(f"Relay Result pull refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+    except OSError as exc: fail(f"Relay Result pull failed: {exc}")
+
+
+def multipart_body(parts):
+    boundary = "----subspace-relay-" + secrets.token_hex(12)
+    chunks = []
+    for name, content, filename, content_type in parts:
+        header = f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n"
+        chunks.extend([header.encode(), content, b"\r\n"])
+    chunks.append(f"--{boundary}--\r\n".encode())
+    return boundary, b"".join(chunks)
+
+
+def submit(args):
+    briefing_id = args.briefing
+    if not BRIEFING_ID.fullmatch(briefing_id):
+        fail("Relay submit requires Briefing id briefing:<32 lowercase hex>")
+    review = Path(args.review).read_bytes(); result = Path(args.result).read_bytes()
+    if len(review) + len(result) > 128_000:
+        fail("Relay Result exceeds the 128 KB cap")
+    state = owner_state_dir(args.state_dir)
+    receipt_path = state / "reviewers" / f"{briefing_id}.json"
+    if receipt_path.exists():
+        receipt = load_json(receipt_path, "reviewer receipt")
+    else:
+        receipt = {"version": 1, "briefing": briefing_id, "endpoint": args.endpoint.rstrip("/"), "deviceId": "dev_" + base32_unpadded(16), "deviceSecret": "sec_" + base32_unpadded(32)}
+    endpoint = args.endpoint.rstrip("/")
+    receipt["endpoint"] = endpoint
+    receipt["idempotencyKey"] = receipt.get("idempotencyKey") or str(uuid.uuid4())
+    if args.dry_run:
+        write_private_json(receipt_path, receipt)
+        print(json.dumps({"ok": True, "dry_run": True, "briefing": briefing_id, "receipt": str(receipt_path)}, indent=2))
+        return
+    boundary, body = multipart_body([("review", review, "review.jsonl", "application/jsonl"), ("result", result, "result.json", "application/json")])
+    request = urllib.request.Request(endpoint + f"/api/briefing/{briefing_id}/result", data=body, method="POST", headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "X-Subspace-Device": receipt["deviceId"], "Authorization": f"Bearer {receipt['deviceSecret']}", "Idempotency-Key": receipt["idempotencyKey"]})
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            response_data = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        fail(f"Relay Result submit refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+    except OSError as exc:
+        fail(f"Relay Result submit failed: {exc}")
+    if not response_data.get("resultId"):
+        fail("Relay Result response did not return resultId")
+    receipt.pop("idempotencyKey", None)
+    write_private_json(receipt_path, receipt)
+    print(json.dumps({"ok": True, "briefing": briefing_id, "result_id": response_data["resultId"], "receipt": str(receipt_path)}, indent=2))
+
+
+def build_feedback_result(args):
+    _, briefing = read_briefing(args.briefing)
+    artifact = briefing["artifacts"][0]
+    actor = args.actor.strip()
+    if not actor:
+        fail("feedback actor is required")
+    entries = []
+    try:
+        lines = Path(args.review).read_text().splitlines()
+    except OSError as exc:
+        fail(f"cannot read review log: {exc}")
+    for index, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as exc:
+            fail(f"invalid review entry {index}: {exc}")
+        if entry.get("briefing") != briefing["id"]:
+            fail(f"review entry {index} belongs to another Briefing")
+        if entry.get("type") == "Resolution":
+            fail("feedback result cannot contain a Resolution")
+        if entry.get("type") != "Annotation":
+            fail(f"review entry {index} has unsupported type")
+        if entry.get("by") != actor:
+            fail(f"review entry {index} actor differs from declared actor")
+        entries.append(entry)
+    result = {"type": "review-v1-result", "mode": "feedback", "briefing": briefing["id"], "artifact": {key: artifact[key] for key in ("id", "uri", "mediaType", "rev")}, "annotations": entries, "actor": actor}
+    output = Path(args.output).resolve(); output.parent.mkdir(parents=True, exist_ok=True); output.write_text(json.dumps(result, separators=(",", ":")) + "\n")
+    print(json.dumps({"ok": True, "briefing": briefing["id"], "annotations": len(entries), "result": str(output)}, indent=2))
+
+
 def fetch_bytes(url):
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
@@ -253,6 +381,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser("package"); p.add_argument("--briefing", required=True); p.add_argument("--output-dir", required=True); p.set_defaults(fn=package)
     pub = commands.add_parser("publish"); pub.add_argument("--package", required=True); pub.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); pub.add_argument("--state-dir"); pub.add_argument("--dry-run", action="store_true"); pub.set_defaults(fn=publish)
+    owner_p = commands.add_parser("results"); owner_p.add_argument("--briefing", required=True); owner_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); owner_p.add_argument("--state-dir"); owner_p.set_defaults(fn=owner_results)
+    pull_p = commands.add_parser("pull-result"); pull_p.add_argument("--briefing", required=True); pull_p.add_argument("--result-id", required=True); pull_p.add_argument("--output-dir", required=True); pull_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); pull_p.add_argument("--state-dir"); pull_p.set_defaults(fn=pull_result)
+    submit_p = commands.add_parser("submit"); submit_p.add_argument("--briefing", required=True); submit_p.add_argument("--review", required=True); submit_p.add_argument("--result", required=True); submit_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); submit_p.add_argument("--state-dir"); submit_p.add_argument("--dry-run", action="store_true"); submit_p.set_defaults(fn=submit)
+    result_p = commands.add_parser("build-feedback-result"); result_p.add_argument("--briefing", required=True); result_p.add_argument("--review", required=True); result_p.add_argument("--actor", required=True); result_p.add_argument("--output", required=True); result_p.set_defaults(fn=build_feedback_result)
     fetch_p = commands.add_parser("fetch"); fetch_p.add_argument("--briefing", required=True); fetch_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); fetch_p.add_argument("--output-dir", required=True); fetch_p.set_defaults(fn=fetch)
     a = commands.add_parser("annotations"); a.add_argument("--briefing", required=True); a.add_argument("--feedback", required=True); a.add_argument("--output", required=True); a.add_argument("--reviewer", help="Declared reviewer identity; required for native Human Review feedback."); a.set_defaults(fn=annotations)
     args = parser.parse_args(); args.fn(args)
