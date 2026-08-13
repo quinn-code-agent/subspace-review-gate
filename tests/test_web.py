@@ -15,16 +15,21 @@ class RelayWebTests(unittest.TestCase):
         self.assertIn("Relay-backed", result.stdout)
         self.assertIn("feedback-only", result.stdout)
 
-    def test_markdown_viewer_has_mermaid_lightbox_and_required_persistent_identity(self):
+    def test_web_reviewer_has_cross_device_annotations_and_integrated_identity(self):
         source = WEB.read_text()
-        for marker in ("marked", "mermaid", "class=\"mermaid\"", "markdown-content", "mermaid-lightbox", "identity-cover", "localStorage", "normalizeIdentity", "identity-edit"):
+        for marker in (
+            "marked", "mermaid", "markdown-content", "diagram-lightbox",
+            "identity-cover", "localStorage", "norm(", "identity-edit", "identity-chip",
+            "annotation-toolbar", "mobile-comment-action", "mobile-sheet", "CSS.highlights",
+            "annotation-color", "railKey", "subspace-draft",
+        ):
             self.assertIn(marker, source)
 
     def test_shared_feedback_is_default_off_and_owner_projected_only(self):
         source = WEB.read_text()
         self.assertIn("id=shared", source)
         self.assertIn("/api/shared-feedback", source)
-        self.assertIn("shared_feedback_enabled", source)
+        self.assertIn("args.shared_feedback", source)
         self.assertIn("--shared-feedback", source)
         self.assertIn("owner_results", source)
 
