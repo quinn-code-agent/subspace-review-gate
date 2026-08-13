@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""Operate a reproducible public Human Review projection for a fixed artifact."""
+import argparse
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_STATE_DIR = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "subspace-review-gate"
+HUMAN_REVIEW_GIT = "git+https://github.com/quinn-code-agent/human-review.git"
+
+
+def emit(payload, code=0):
+    print(json.dumps(payload, indent=2))
+    raise SystemExit(code)
+
+
+def state_dir(value):
+    return Path(value).expanduser().resolve() if value else DEFAULT_STATE_DIR
+
+
+def state_path(directory):
+    return directory / "public-review.json"
+
+
+def command(name):
+    return shutil.which(name)
+
+
+def pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def doctor(_args):
+    required = ["node", "npm", "cloudflared", "curl", "human-review"]
+    found = {name: command(name) for name in required}
+    missing = [name for name, path in found.items() if not path]
+    emit({"ok": not missing, "commands": found, "missing": missing, "human_review_source": HUMAN_REVIEW_GIT}, 0 if not missing else 2)
+
+
+def install_runtime(_args):
+    if not command("npm"):
+        emit({"ok": False, "error": "npm is required to install Human Review", "missing": ["npm"]}, 2)
+    result = subprocess.run([command("npm"), "install", "--global", HUMAN_REVIEW_GIT], text=True, capture_output=True)
+    if result.returncode:
+        emit({"ok": False, "error": "Human Review install failed", "detail": result.stderr[-2000:]}, 2)
+    doctor(_args)
+
+
+def read_server_record():
+    record = Path.home() / ".human-review" / "server.json"
+    try:
+        data = json.loads(record.read_text())
+        return int(data["port"])
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        emit({"ok": False, "error": f"cannot read Human Review server record: {exc}"}, 2)
+
+
+def wait_for_tunnel_url(log_file, timeout):
+    pattern = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        text = log_file.read_text(errors="replace") if log_file.exists() else ""
+        match = pattern.search(text)
+        if match:
+            return match.group(0)
+        time.sleep(0.25)
+    return None
+
+
+def start_process(argv, log_path):
+    log = log_path.open("ab")
+    process = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    log.close()
+    return process
+
+
+def verify_public_session(url, session_path, timeout):
+    deadline = time.monotonic() + timeout
+    expected = f'data-session="{session_path.rsplit("/", 1)[-1]}"'
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            result = subprocess.run([command("curl"), "-fsS", "-L", "--connect-timeout", "10", "--max-time", "15", url], text=True, capture_output=True)
+            if result.returncode == 0 and expected in result.stdout:
+                return
+            last_error = RuntimeError(result.stderr.strip() or "public URL did not return its expected Human Review session")
+        except Exception as exc:
+            last_error = exc
+        time.sleep(1)
+    raise RuntimeError(last_error or "public URL did not become reachable")
+
+
+def open_review(args):
+    artifact = Path(args.artifact).expanduser().resolve()
+    if not artifact.is_file():
+        emit({"ok": False, "error": f"artifact not found: {artifact}"}, 2)
+    missing = [name for name in ("node", "cloudflared", "curl", "human-review") if not command(name)]
+    if missing:
+        emit({"ok": False, "error": "runtime prerequisites missing", "missing": missing, "install": "subspace-review-runtime install-runtime"}, 2)
+    directory = state_dir(args.state_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    existing = state_path(directory)
+    if existing.exists():
+        try:
+            data = json.loads(existing.read_text())
+            if any(pid_alive(data.get(key)) for key in ("proxy_pid", "tunnel_pid")):
+                emit({"ok": False, "error": "an active public review exists; close it first", "state": str(existing)}, 2)
+        except json.JSONDecodeError:
+            pass
+        existing.unlink(missing_ok=True)
+
+    opened = subprocess.run([command("human-review"), str(artifact)], text=True, capture_output=True)
+    if opened.returncode:
+        emit({"ok": False, "error": "Human Review failed to open artifact", "detail": opened.stderr[-2000:]}, 2)
+    match = re.search(r"http://127\.0\.0\.1:\d+(/s/[^\s]+)", opened.stdout)
+    if not match:
+        emit({"ok": False, "error": "Human Review returned no session path", "detail": opened.stdout[-2000:]}, 2)
+    session_path = match.group(1)
+    upstream_port = read_server_record()
+    proxy_log = directory / "proxy.log"
+    tunnel_log = directory / "tunnel.log"
+    proxy = start_process([command("node"), str(PLUGIN_ROOT / "runtime" / "loopback-proxy.mjs"), "127.0.0.1", str(args.proxy_port), str(upstream_port)], proxy_log)
+    time.sleep(0.3)
+    if not pid_alive(proxy.pid):
+        emit({"ok": False, "error": "review proxy failed to start", "log": str(proxy_log)}, 2)
+    tunnel = None
+    url = None
+    last_error = None
+    # Cloudflare can allocate a Quick Tunnel hostname before its DNS record is
+    # visible. Retry a fresh tunnel rather than reporting an unusable URL.
+    for attempt in range(1, 4):
+        tunnel_log.write_text("")
+        tunnel = start_process([command("cloudflared"), "tunnel", "--url", f"http://127.0.0.1:{args.proxy_port}", "--http-host-header", f"127.0.0.1:{args.proxy_port}", "--no-autoupdate"], tunnel_log)
+        base_url = wait_for_tunnel_url(tunnel_log, args.timeout)
+        if base_url:
+            candidate = base_url + session_path
+            try:
+                verify_public_session(candidate, session_path, args.timeout)
+                url = candidate
+                break
+            except Exception as exc:
+                last_error = exc
+        else:
+            last_error = RuntimeError("Cloudflare Quick Tunnel did not provide a URL")
+        if pid_alive(tunnel.pid):
+            os.kill(tunnel.pid, signal.SIGTERM)
+        time.sleep(1)
+    if not url:
+        if tunnel and pid_alive(tunnel.pid): os.kill(tunnel.pid, signal.SIGTERM)
+        if pid_alive(proxy.pid): os.kill(proxy.pid, signal.SIGTERM)
+        emit({"ok": False, "error": f"public review verification failed after 3 tunnels: {last_error}", "log": str(tunnel_log)}, 2)
+    data = {"version": 1, "artifact": str(artifact), "session_path": session_path, "url": url, "upstream_port": upstream_port, "proxy_port": args.proxy_port, "proxy_pid": proxy.pid, "tunnel_pid": tunnel.pid, "proxy_log": str(proxy_log), "tunnel_log": str(tunnel_log), "public": True}
+    state_path(directory).write_text(json.dumps(data, indent=2) + "\n")
+    emit({"ok": True, "review": data, "warning": "Quick Tunnel is public and temporary; anyone with this URL may submit feedback."})
+
+
+def status(args):
+    path = state_path(state_dir(args.state_dir))
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        emit({"ok": False, "error": "no active review state", "state": str(path)}, 2)
+    live = {key: pid_alive(data.get(key)) for key in ("proxy_pid", "tunnel_pid")}
+    emit({"ok": all(live.values()), "review": data, "processes": live}, 0 if all(live.values()) else 2)
+
+
+def close(args):
+    path = state_path(state_dir(args.state_dir))
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        emit({"ok": False, "error": "no active review state", "state": str(path)}, 2)
+    stopped = []
+    for key in ("tunnel_pid", "proxy_pid"):
+        pid = data.get(key)
+        if pid_alive(pid):
+            os.kill(int(pid), signal.SIGTERM)
+            stopped.append(pid)
+    path.unlink(missing_ok=True)
+    emit({"ok": True, "stopped": stopped})
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("doctor").set_defaults(fn=doctor)
+    commands.add_parser("install-runtime").set_defaults(fn=install_runtime)
+    open_p = commands.add_parser("open")
+    open_p.add_argument("--artifact", required=True); open_p.add_argument("--state-dir"); open_p.add_argument("--proxy-port", type=int, default=17892); open_p.add_argument("--timeout", type=int, default=60); open_p.set_defaults(fn=open_review)
+    status_p = commands.add_parser("status"); status_p.add_argument("--state-dir"); status_p.set_defaults(fn=status)
+    close_p = commands.add_parser("close"); close_p.add_argument("--state-dir"); close_p.set_defaults(fn=close)
+    args = parser.parse_args(); args.fn(args)
+
+if __name__ == "__main__":
+    main()

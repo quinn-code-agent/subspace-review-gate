@@ -69,18 +69,50 @@ subspace-review-gate build-resolution \
 
 `revise` and `hold` require a reason or a prior included Annotation. `approve` still preserves the exact chosen route and its destination—decision alone is not routing.
 
-## External Human Review
+## External Human Review runtime
 
-The stock Human Review client assumes a local browser and changes the artifact iframe to `127.0.0.1` for non-loopback origins. Use the companion fork at [quinn-code-agent/human-review](https://github.com/quinn-code-agent/human-review), which retains the reachable remote origin for Tailnet or reverse-proxied reviews while preserving loopback isolation locally.
+The plugin now manages the tested temporary public-review path. It uses the patched [quinn-code-agent/human-review](https://github.com/quinn-code-agent/human-review) fork: stock Human Review redirects a remote viewer's artifact iframe to its own `127.0.0.1`; the fork preserves the reachable external origin while keeping local loopback isolation.
 
-For temporary internal review:
+### Prerequisites
 
-- run Human Review on the artifact;
-- expose it only on the Tailnet IP using a proxy that rewrites the upstream Host header to loopback;
-- leave `human-review poll <artifact> --timeout …` running;
-- verify a test feedback submission actually reaches the poll.
+A new Hermes host needs only:
 
-For durable access, use a named authenticated tunnel. Do not expose sensitive artifacts through a public unauthenticated Quick Tunnel.
+1. Hermes Agent with this plugin installed and enabled;
+2. Python 3 and Node.js 20+ (`node`, `npm`);
+3. `cloudflared` on `PATH` with outbound access to Cloudflare;
+4. permission to install the public Human Review fork globally through npm, or a preinstalled `human-review` command;
+5. the local artifact to review.
+
+No Cloudflare account, DNS setup, Tailscale, or API key is required for a **temporary public Quick Tunnel**. Check readiness:
+
+```bash
+subspace-review-runtime doctor
+```
+
+Install the patched viewer if missing:
+
+```bash
+subspace-review-runtime install-runtime
+```
+
+Open a verified public HTTPS viewer:
+
+```bash
+subspace-review-runtime open --artifact ./README.md
+```
+
+The command stores process state under `$HERMES_HOME/subspace-review-gate/`, creates the Human Review session, starts the loopback Host-rewriting proxy and Cloudflare Quick Tunnel, then verifies the exact public session URL returns the expected session shell. It prints the URL only after that verification.
+
+Inspect or close it:
+
+```bash
+subspace-review-runtime status
+subspace-review-runtime close
+```
+
+The corresponding Hermes tools are `subspace_review_gate_open_public_review`, `subspace_review_gate_review_status`, and `subspace_review_gate_close_public_review`.
+
+A Quick Tunnel is public, temporary, and unauthenticated: anyone with the URL can submit feedback. Keep `human-review poll <artifact> --timeout …` running while review is open, and verify a submitted test feedback batch arrives before treating the viewer as usable. For durable or sensitive review, use a named authenticated Cloudflare Tunnel + Access; that requires a Cloudflare account, owned domain/DNS, and Access policy.
 
 ## Slack gate UI
 

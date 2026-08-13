@@ -51,6 +51,33 @@ def build_resolution(args, **_):
     return call(*command)
 
 
+def runtime_call(*args):
+    runtime = ROOT / "bin" / "subspace-review-runtime"
+    result = subprocess.run([sys.executable, str(runtime), *args], text=True, capture_output=True)
+    return result.stdout if result.stdout.strip() else json.dumps({"ok": False, "error": result.stderr.strip() or "review runtime failed"})
+
+
+def open_public_review(args, **_):
+    command = ["open", "--artifact", args["artifact"]]
+    if args.get("state_dir"):
+        command.extend(["--state-dir", args["state_dir"]])
+    return runtime_call(*command)
+
+
+def review_runtime_status(args, **_):
+    command = ["status"]
+    if args.get("state_dir"):
+        command.extend(["--state-dir", args["state_dir"]])
+    return runtime_call(*command)
+
+
+def close_public_review(args, **_):
+    command = ["close"]
+    if args.get("state_dir"):
+        command.extend(["--state-dir", args["state_dir"]])
+    return runtime_call(*command)
+
+
 def schema(name, description, properties, required):
     return {"name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": required}}
 
@@ -65,3 +92,10 @@ def register(ctx):
         schema=schema("subspace_review_gate_render_slack", "Render ordered Subspace routes for Slack with reply-by-number instruction.", {**common, "human_review_url": {"type": "string"}}, ["briefing"]), handler=render_slack)
     ctx.register_tool(name="subspace_review_gate_build_resolution", toolset="subspace_review_gate", emoji="⚖️", check_fn=available,
         schema=schema("subspace_review_gate_build_resolution", "Validate one selected route and produce portable Subspace Annotation plus Resolution objects.", {**common, "choice": {"type": "string"}, "reason": {"type": "string"}, "by": {"type": "string"}}, ["briefing", "choice"]), handler=build_resolution)
+    runtime_props = {"state_dir": {"type": "string", "description": "Optional directory for public-review process state."}}
+    ctx.register_tool(name="subspace_review_gate_open_public_review", toolset="subspace_review_gate", emoji="🌐", check_fn=available,
+        schema=schema("subspace_review_gate_open_public_review", "Open a temporary public HTTPS Human Review URL for an artifact and verify the live session. Anyone with the URL can submit feedback.", {"artifact": {"type": "string"}, **runtime_props}, ["artifact"]), handler=open_public_review)
+    ctx.register_tool(name="subspace_review_gate_review_status", toolset="subspace_review_gate", emoji="📡", check_fn=available,
+        schema=schema("subspace_review_gate_review_status", "Check whether the managed public Human Review proxy and tunnel are live.", runtime_props, []), handler=review_runtime_status)
+    ctx.register_tool(name="subspace_review_gate_close_public_review", toolset="subspace_review_gate", emoji="🛑", check_fn=available,
+        schema=schema("subspace_review_gate_close_public_review", "Stop the managed public Human Review proxy and temporary Cloudflare tunnel.", runtime_props, []), handler=close_public_review)

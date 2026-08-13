@@ -27,6 +27,9 @@ class PluginRegistrationTests(unittest.TestCase):
             "subspace_review_gate_verify",
             "subspace_review_gate_render_slack",
             "subspace_review_gate_build_resolution",
+            "subspace_review_gate_open_public_review",
+            "subspace_review_gate_review_status",
+            "subspace_review_gate_close_public_review",
         ])
         self.assertTrue(all(entry["toolset"] == "subspace_review_gate" for entry in ctx.tools))
 
