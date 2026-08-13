@@ -67,9 +67,9 @@ def create(args):
             {"id": "route:3:hold", "decision": "hold", "label": "Park this decision", "to": "outcome:held"},
         ]
     briefing = {
-        "type": "Briefing", "version": "1", "id": args.id or f"briefing:{slug(artifact.stem)}",
+        "type": "Briefing", "version": "1", "id": args.id or f"briefing:{hashlib.sha256((str(artifact) + sha256(artifact) + args.question).encode()).hexdigest()[:32]}",
         "question": args.question,
-        "artifacts": [{"id": artifact_id, "uri": str(artifact), "mediaType": args.media_type or "text/markdown", "rev": "sha256:" + sha256(artifact)}],
+        "artifacts": [{"id": artifact_id, "uri": args.artifact_uri or artifact.name, "mediaType": args.media_type or "text/markdown", "rev": "sha256:" + sha256(artifact)}],
         "context": [{"id": "routing:outcome", "type": "Routing", "ns": args.namespace, "routes": route_list}],
     }
     briefing_path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,7 +134,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     create_p = commands.add_parser("create")
     create_p.add_argument("--artifact", required=True); create_p.add_argument("--question", required=True); create_p.add_argument("--briefing", required=True)
-    create_p.add_argument("--route", action="append"); create_p.add_argument("--id"); create_p.add_argument("--namespace", default="hermes:review-gate"); create_p.add_argument("--media-type")
+    create_p.add_argument("--route", action="append"); create_p.add_argument("--id"); create_p.add_argument("--namespace", default="hermes:review-gate"); create_p.add_argument("--media-type"); create_p.add_argument("--artifact-uri", help="Portable relative artifact URI for relay packages; defaults to the artifact filename.")
     create_p.set_defaults(fn=create)
     verify_p = commands.add_parser("verify"); verify_p.add_argument("--briefing", required=True); verify_p.set_defaults(fn=verify)
     slack_p = commands.add_parser("render-slack"); slack_p.add_argument("--briefing", required=True); slack_p.add_argument("--human-review-url"); slack_p.set_defaults(fn=render_slack)

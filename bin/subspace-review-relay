@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""Phase 1 Relay adapter: package a verified Briefing and normalize Web feedback."""
+import argparse
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import secrets
+import sys
+import urllib.error
+import urllib.request
+import uuid
+from pathlib import Path
+
+SAFE_URI = re.compile(r"^(?![.-])(?:[A-Za-z0-9._-]+/){0,7}[A-Za-z0-9._-]+$")
+BRIEFING_ID = re.compile(r"^briefing:[0-9a-f]{32}$")
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(2)
+
+
+def load_json(path, label):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"invalid {label}: {exc}")
+
+
+def sha256_bytes(value):
+    return hashlib.sha256(value).hexdigest()
+
+
+def now():
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def safe_uri(uri):
+    if not isinstance(uri, str) or not SAFE_URI.fullmatch(uri):
+        fail("Relay artifact URI must be a safe relative path with 1–8 simple segments")
+    return uri
+
+
+def read_briefing(path):
+    path = Path(path).resolve()
+    briefing = load_json(path, "Briefing")
+    if briefing.get("type") != "Briefing" or briefing.get("version") != "1":
+        fail("expected a Subspace Review & Gate v1 Briefing")
+    if not BRIEFING_ID.fullmatch(briefing.get("id", "")):
+        fail("Relay requires Briefing id briefing:<32 lowercase hex>")
+    artifacts = briefing.get("artifacts")
+    if not isinstance(artifacts, list) or len(artifacts) != 1:
+        fail("Relay Phase 1 requires exactly one artifact")
+    return path, briefing
+
+
+def package(args):
+    briefing_path, briefing = read_briefing(args.briefing)
+    artifact = briefing["artifacts"][0]
+    uri = safe_uri(artifact.get("uri"))
+    source = briefing_path.parent / uri
+    if not source.is_file():
+        fail(f"artifact is not resolvable relative to Briefing: {uri}")
+    raw = source.read_bytes()
+    expected = artifact.get("rev")
+    actual = "sha256:" + sha256_bytes(raw)
+    if actual != expected:
+        fail(f"artifact digest mismatch: expected {expected}, got {actual}")
+    output = Path(args.output_dir).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    target = output / uri
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(raw)
+    briefing_bytes = briefing_path.read_bytes()
+    (output / "briefing.json").write_bytes(briefing_bytes)
+    manifest = {
+        "type": "subspace-relay-package", "version": "1",
+        "briefingSha256": "sha256:" + sha256_bytes(briefing_bytes),
+        "files": [{"artifactId": artifact["id"], "uri": uri, "mediaType": artifact["mediaType"], "rev": expected, "size": len(raw)}],
+    }
+    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    print(json.dumps({"ok": True, "briefing": briefing["id"], "package": str(output), "artifact": uri, "manifest": str(output / "manifest.json")}, indent=2))
+
+
+def load_package(package_dir):
+    root = Path(package_dir).resolve()
+    manifest_bytes = (root / "manifest.json").read_bytes()
+    briefing_bytes = (root / "briefing.json").read_bytes()
+    manifest = load_json(root / "manifest.json", "Relay manifest")
+    if manifest.get("type") != "subspace-relay-package" or manifest.get("version") != "1":
+        fail("expected Relay package manifest version 1")
+    files = manifest.get("files")
+    if not isinstance(files, list) or len(files) != 1:
+        fail("Relay Phase 1 package must contain exactly one artifact")
+    file = files[0]
+    uri = safe_uri(file.get("uri"))
+    artifact = (root / uri).read_bytes()
+    if file.get("size") != len(artifact) or file.get("rev") != "sha256:" + sha256_bytes(artifact):
+        fail("Relay package artifact bytes do not match manifest")
+    if manifest.get("briefingSha256") != "sha256:" + sha256_bytes(briefing_bytes):
+        fail("Relay package Briefing bytes do not match manifest")
+    briefing = load_json(root / "briefing.json", "Briefing")
+    if briefing.get("id") is None or briefing.get("id") == "":
+        fail("Relay package Briefing id is missing")
+    return root, manifest_bytes, briefing_bytes, artifact, file, briefing
+
+
+def owner_state_dir(value):
+    return Path(value).expanduser().resolve() if value else Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "subspace-review-gate" / "relay"
+
+
+def write_private_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    os.chmod(path, 0o600)
+
+
+def base32_unpadded(byte_count):
+    import base64
+    return base64.b32encode(secrets.token_bytes(byte_count)).decode("ascii").lower().rstrip("=")
+
+
+def publish(args):
+    root, manifest_bytes, briefing_bytes, artifact, file, briefing = load_package(args.package)
+    state = owner_state_dir(args.state_dir)
+    device_id = "dev_" + base32_unpadded(16)
+    device_secret = "sec_" + base32_unpadded(32)
+    idempotency_key = str(uuid.uuid4())
+    endpoint = args.endpoint.rstrip("/")
+    receipt = {"version": 1, "briefing": briefing["id"], "endpoint": endpoint, "deviceId": device_id, "deviceSecret": device_secret, "idempotencyKey": idempotency_key, "package": str(root)}
+    receipt_path = state / "owners" / f"{briefing['id']}.json"
+    if args.dry_run:
+        write_private_json(receipt_path, receipt)
+        print(json.dumps({"ok": True, "dry_run": True, "briefing": briefing["id"], "receipt": str(receipt_path), "endpoint": endpoint}, indent=2))
+        return
+    boundary = "----subspace-relay-" + secrets.token_hex(12)
+    def part(name, content, filename=None, content_type="application/octet-stream"):
+        header = f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\""
+        if filename: header += f"; filename=\"{filename}\""
+        header += f"\r\nContent-Type: {content_type}\r\n\r\n"
+        return header.encode() + content + b"\r\n"
+    body = b"".join([
+        part("manifest", manifest_bytes, "manifest.json", "application/json"),
+        part("briefing", briefing_bytes, "briefing.json", "application/json"),
+        part(file["artifactId"], artifact, file["uri"], file["mediaType"]),
+        f"--{boundary}--\r\n".encode(),
+    ])
+    request = urllib.request.Request(endpoint + "/api/briefing", data=body, method="POST", headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "X-Subspace-Device": device_id, "Authorization": f"Bearer {device_secret}", "Idempotency-Key": idempotency_key})
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            response_data = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        fail(f"Relay publish refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+    except OSError as exc:
+        fail(f"Relay publish failed: {exc}")
+    if response_data.get("briefingId") != briefing["id"] or not response_data.get("shareUrl"):
+        fail("Relay publish response did not return matching Briefing identity and share URL")
+    receipt["shareUrl"] = response_data["shareUrl"]
+    write_private_json(receipt_path, receipt)
+    print(json.dumps({"ok": True, "briefing": briefing["id"], "share_url": response_data["shareUrl"], "receipt": str(receipt_path)}, indent=2))
+
+
+def fetch_bytes(url):
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return response.read()
+    except (OSError, urllib.error.HTTPError) as exc:
+        fail(f"Relay fetch failed: {exc}")
+
+
+def fetch(args):
+    briefing_id = args.briefing
+    if not BRIEFING_ID.fullmatch(briefing_id):
+        fail("Relay fetch requires Briefing id briefing:<32 lowercase hex>")
+    endpoint = args.endpoint.rstrip("/")
+    manifest_response = fetch_bytes(f"{endpoint}/api/briefing/{briefing_id}/manifest")
+    try:
+        envelope = json.loads(manifest_response)
+        manifest = envelope["manifest"]
+    except (ValueError, KeyError, TypeError) as exc:
+        fail(f"Relay fetch returned invalid manifest response: {exc}")
+    briefing_bytes = fetch_bytes(f"{endpoint}/api/briefing/{briefing_id}/document")
+    if manifest.get("briefingSha256") != "sha256:" + sha256_bytes(briefing_bytes):
+        fail("Relay fetched Briefing bytes do not match manifest")
+    briefing = load_json_bytes(briefing_bytes, "Relay Briefing")
+    if briefing.get("id") != briefing_id:
+        fail("Relay fetched Briefing identity does not match requested identity")
+    files = manifest.get("files")
+    if not isinstance(files, list) or len(files) != 1:
+        fail("Relay Phase 1 fetch requires exactly one artifact")
+    file = files[0]
+    uri = safe_uri(file.get("uri"))
+    digest = file.get("rev", "").removeprefix("sha256:")
+    artifact = fetch_bytes(f"{endpoint}/api/briefing/{briefing_id}/artifact/{digest}")
+    if file.get("rev") != "sha256:" + sha256_bytes(artifact) or file.get("size") != len(artifact):
+        fail("Relay fetched artifact bytes do not match manifest")
+    output = Path(args.output_dir).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (output / "briefing.json").write_bytes(briefing_bytes)
+    target = output / uri; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(artifact)
+    print(json.dumps({"ok": True, "briefing": briefing_id, "package": str(output), "artifact": uri}, indent=2))
+
+
+def load_json_bytes(value, label):
+    try:
+        return json.loads(value)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        fail(f"invalid {label}: {exc}")
+
+
+def annotation_id(index, body):
+    return "annotation:web-" + hashlib.sha256(f"{index}\0{body}".encode()).hexdigest()[:20]
+
+
+def annotations(args):
+    _, briefing = read_briefing(args.briefing)
+    feedback = load_json(args.feedback, "web feedback")
+    actor = args.reviewer or feedback.get("reviewer")
+    if not isinstance(actor, str) or not actor:
+        fail("web feedback requires --reviewer person:<name> or reviewer")
+    artifact = briefing["artifacts"][0]["id"]
+    comments = list(feedback.get("comments", []))
+    for page in feedback.get("pages", []):
+        for comment in page.get("comments", []):
+            anchor = comment.get("anchor", {})
+            comments.append({"quote": comment.get("quote") or anchor.get("quote"), "prefix": anchor.get("prefix"), "suffix": anchor.get("suffix"), "feedback": comment.get("feedback")})
+    entries = []
+    for index, comment in enumerate(comments, 1):
+        quote = comment.get("quote")
+        body = comment.get("feedback")
+        if not isinstance(quote, str) or not quote or not isinstance(body, str) or not body:
+            fail("every comment requires quote and feedback")
+        selector = {"type": "TextQuoteSelector", "exact": quote}
+        for key in ("prefix", "suffix"):
+            if isinstance(comment.get(key), str) and comment[key]: selector[key] = comment[key]
+        entries.append({"type": "Annotation", "id": annotation_id(index, body), "briefing": briefing["id"], "by": actor, "at": now(), "target": artifact, "selectors": [selector], "kind": "comment", "body": body})
+    note = feedback.get("overall_note")
+    if isinstance(note, str) and note.strip():
+        entries.append({"type": "Annotation", "id": annotation_id(len(entries) + 1, note), "briefing": briefing["id"], "by": actor, "at": now(), "target": artifact, "kind": "comment", "body": note.strip()})
+    if not entries:
+        fail("web feedback contains no portable comments")
+    output = Path(args.output).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("".join(json.dumps(entry, separators=(",", ":")) + "\n" for entry in entries))
+    print(json.dumps({"ok": True, "briefing": briefing["id"], "annotations": len(entries), "review": str(output)}, indent=2))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    p = commands.add_parser("package"); p.add_argument("--briefing", required=True); p.add_argument("--output-dir", required=True); p.set_defaults(fn=package)
+    pub = commands.add_parser("publish"); pub.add_argument("--package", required=True); pub.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); pub.add_argument("--state-dir"); pub.add_argument("--dry-run", action="store_true"); pub.set_defaults(fn=publish)
+    fetch_p = commands.add_parser("fetch"); fetch_p.add_argument("--briefing", required=True); fetch_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); fetch_p.add_argument("--output-dir", required=True); fetch_p.set_defaults(fn=fetch)
+    a = commands.add_parser("annotations"); a.add_argument("--briefing", required=True); a.add_argument("--feedback", required=True); a.add_argument("--output", required=True); a.add_argument("--reviewer", help="Declared reviewer identity; required for native Human Review feedback."); a.set_defaults(fn=annotations)
+    args = parser.parse_args(); args.fn(args)
+
+if __name__ == "__main__":
+    main()

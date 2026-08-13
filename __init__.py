@@ -78,6 +78,35 @@ def close_public_review(args, **_):
     return runtime_call(*command)
 
 
+def relay_call(*args):
+    relay = ROOT / "bin" / "subspace-review-relay"
+    result = subprocess.run([sys.executable, str(relay), *args], text=True, capture_output=True)
+    return result.stdout if result.stdout.strip() else json.dumps({"ok": False, "error": result.stderr.strip() or "relay adapter failed"})
+
+
+def relay_package(args, **_):
+    return relay_call("package", "--briefing", args["briefing"], "--output-dir", args["output_dir"])
+
+
+def relay_publish(args, **_):
+    command = ["publish", "--package", args["package"]]
+    if args.get("endpoint"): command.extend(["--endpoint", args["endpoint"]])
+    if args.get("state_dir"): command.extend(["--state-dir", args["state_dir"]])
+    return relay_call(*command)
+
+
+def relay_fetch(args, **_):
+    command = ["fetch", "--briefing", args["briefing"], "--output-dir", args["output_dir"]]
+    if args.get("endpoint"): command.extend(["--endpoint", args["endpoint"]])
+    return relay_call(*command)
+
+
+def relay_annotations(args, **_):
+    command = ["annotations", "--briefing", args["briefing"], "--feedback", args["feedback"], "--output", args["output"]]
+    if args.get("reviewer"): command.extend(["--reviewer", args["reviewer"]])
+    return relay_call(*command)
+
+
 def schema(name, description, properties, required):
     return {"name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": required}}
 
@@ -99,3 +128,12 @@ def register(ctx):
         schema=schema("subspace_review_gate_review_status", "Check whether the managed public Human Review proxy and tunnel are live.", runtime_props, []), handler=review_runtime_status)
     ctx.register_tool(name="subspace_review_gate_close_public_review", toolset="subspace_review_gate", emoji="🛑", check_fn=available,
         schema=schema("subspace_review_gate_close_public_review", "Stop the managed public Human Review proxy and temporary Cloudflare tunnel.", runtime_props, []), handler=close_public_review)
+    relay_endpoint = {"endpoint": {"type": "string", "description": "Relay base URL; defaults to the shared staging endpoint."}}
+    ctx.register_tool(name="subspace_review_gate_relay_package", toolset="subspace_review_gate", emoji="📦", check_fn=available,
+        schema=schema("subspace_review_gate_relay_package", "Build a Relay-compatible package from a verified immutable Briefing. Phase 1 feedback transport only.", {**common, "output_dir": {"type": "string"}}, ["briefing", "output_dir"]), handler=relay_package)
+    ctx.register_tool(name="subspace_review_gate_relay_publish", toolset="subspace_review_gate", emoji="🚀", check_fn=available,
+        schema=schema("subspace_review_gate_relay_publish", "Publish a Relay package to staging and store a local private owner receipt. Does not create a Resolution.", {"package": {"type": "string"}, **relay_endpoint, "state_dir": {"type": "string"}}, ["package"]), handler=relay_publish)
+    ctx.register_tool(name="subspace_review_gate_relay_fetch", toolset="subspace_review_gate", emoji="📥", check_fn=available,
+        schema=schema("subspace_review_gate_relay_fetch", "Fetch and SHA-256 verify a shared Relay package for a Web or TUI viewer. Feedback-only Phase 1.", {**common, "output_dir": {"type": "string"}, **relay_endpoint}, ["briefing", "output_dir"]), handler=relay_fetch)
+    ctx.register_tool(name="subspace_review_gate_relay_annotations", toolset="subspace_review_gate", emoji="📝", check_fn=available,
+        schema=schema("subspace_review_gate_relay_annotations", "Convert Human Review comments to portable Subspace Annotation JSONL; no Resolution is emitted.", {**common, "feedback": {"type": "string"}, "output": {"type": "string"}, "reviewer": {"type": "string"}}, ["briefing", "feedback", "output"]), handler=relay_annotations)

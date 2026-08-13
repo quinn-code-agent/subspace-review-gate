@@ -116,6 +116,49 @@ The corresponding Hermes tools are `subspace_review_gate_open_public_review`, `s
 
 A Quick Tunnel is public, temporary, and unauthenticated: anyone with the URL can submit feedback. Keep `human-review poll <artifact> --timeout …` running while review is open, and verify a submitted test feedback batch arrives before treating the viewer as usable. For durable or sensitive review, use a named authenticated Cloudflare Tunnel + Access; that requires a Cloudflare account, owned domain/DNS, and Access policy.
 
+## Relay staging dogfood — Phase 1 feedback transport
+
+Phase 1 adds a Relay-compatible, feedback-only adapter. It intentionally does **not** create a Resolution, interpret routing, or write a workflow verdict.
+
+1. Create a Briefing with a portable relative artifact URI (the CLI now defaults to the artifact filename):
+
+```bash
+subspace-review-gate create --artifact ./README.md --artifact-uri README.md \
+  --question 'Is this README clear?' --briefing .review/briefing.json \
+  --route 'approve|Ready|publication:ready' \
+  --route 'revise|Revise|authoring:revise'
+subspace-review-gate verify --briefing .review/briefing.json
+```
+
+2. Produce and publish the exact immutable Relay package to the existing staging endpoint:
+
+```bash
+subspace-review-relay package --briefing .review/briefing.json --output-dir .review/relay-package
+subspace-review-relay publish --package .review/relay-package
+```
+
+Relay independently verifies the manifest, artifact size, URI containment, raw SHA-256 digests, and Briefing/package coherence. The publish command retains an owner receipt under `$HERMES_HOME/subspace-review-gate/relay/owners/` with mode `0600`; it never prints the device secret.
+
+3. A Web or TUI reviewer fetches and verifies the staging snapshot before rendering it:
+
+```bash
+subspace-review-relay fetch --briefing briefing:<32-lowercase-hex> --output-dir .review/fetched
+```
+
+4. Preserve Human Review as the Web feedback renderer. Convert a submitted Human Review batch to portable Subspace Annotation JSONL; this requires the externally confirmed reviewer identity and emits **no Resolution**:
+
+```bash
+subspace-review-relay annotations \
+  --briefing .review/briefing.json \
+  --feedback human-review-feedback.json \
+  --reviewer person:reviewer \
+  --output .review/review.jsonl
+```
+
+The four corresponding Hermes tools are `subspace_review_gate_relay_package`, `subspace_review_gate_relay_publish`, `subspace_review_gate_relay_fetch`, and `subspace_review_gate_relay_annotations`.
+
+Relay share URLs are bearer capabilities: do not publish sensitive artifact bytes. Stage data is separate from production data but is real remote storage and uses real Relay quotas.
+
 ## Slack gate UI
 
 Slack is a projection, not the portable log or workflow writer. The posted message must show:
