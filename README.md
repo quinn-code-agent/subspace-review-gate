@@ -195,6 +195,16 @@ The old path was `Human Review feedback JSON → adapter → Annotation`. Phase 
 
 **Safety boundary:** Relay accepts and stores Result bytes; it does not interpret route semantics, authorize an approver, mint a binding Resolution, or modify workflow state. Slack remains a separately projected gate UI; an authorized external controller/leg remains the only workflow writer.
 
+The owner may opt in to a read-only, sanitized projection of committed feedback:
+
+```bash
+python3 bin/subspace-relay-web open \
+  --briefing briefing:<id> \
+  --shared-feedback
+```
+
+The UI always shows **Show team feedback**, but the corresponding endpoint is **off by default** and returns no content unless the owner starts the shell with `--shared-feedback`. When enabled, the owner service alone lists and pulls Relay Results using its private owner receipt, extracts portable Annotation fields (`by`, selected quote, body), and serves only that projection to the browser. It never exposes owner receipts or raw Result files. This remains advisory, read-only feedback and does not create a Resolution.
+
 ## Slack gate UI
 
 Slack is a projection, not the portable log or workflow writer. The posted message must show:

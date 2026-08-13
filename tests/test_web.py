@@ -15,12 +15,13 @@ class RelayWebTests(unittest.TestCase):
         self.assertIn("Relay-backed", result.stdout)
         self.assertIn("feedback-only", result.stdout)
 
-    def test_reviewer_identity_is_collected_per_browser_session_not_cli_wide(self):
+    def test_shared_feedback_is_default_off_and_owner_projected_only(self):
         source = WEB.read_text()
-        self.assertIn("id=reviewer", source)
-        self.assertIn('reviewer=data.get("reviewer", "")', source)
-        self.assertIn("reviewer_state", source)
-        self.assertNotIn('parser.add_argument("--reviewer", required=True)', source)
+        self.assertIn("id=shared", source)
+        self.assertIn("/api/shared-feedback", source)
+        self.assertIn("shared_feedback_enabled", source)
+        self.assertIn("--shared-feedback", source)
+        self.assertIn("owner_results", source)
 
 
 if __name__ == "__main__":
