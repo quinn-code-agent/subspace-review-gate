@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Relay-backed Subspace Web reviewer. Uses no Human Review wire protocol."""
 import argparse
+import hashlib
 import html
 import json
 import os
+import re
 import subprocess
 import sys
-import webbrowser
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -29,21 +31,27 @@ def page(briefing, artifact_text, media_type):
     template = '''<!doctype html><meta charset=utf-8><title>Subspace Web Review</title>
 <style>body{margin:0;display:grid;grid-template-columns:minmax(0,1fr) 340px;font:15px system-ui;background:#f5f5f2;color:#202124}main{padding:48px;max-width:900px}aside{background:#17212b;color:#fff;padding:24px;position:sticky;top:0;height:100vh;box-sizing:border-box}pre{white-space:pre-wrap;font:15px/1.65 ui-monospace,monospace}textarea{width:100%;height:100px;box-sizing:border-box}button{padding:10px 14px;border:0;border-radius:6px;background:#7dd3fc;color:#082f49;font-weight:700;cursor:pointer}small{color:#b9c6d0}.comment{border-left:3px solid #7dd3fc;padding:8px;margin:12px 0;background:#223140}</style>
 <main><p><small>Immutable artifact · __REV__</small></p><h1>__QUESTION__</h1>__CONTENT__</main>
-<aside><h2>Feedback</h2><p><small>Select text in the artifact, then write a comment. Send creates a Subspace Annotation-only Review v1 Result and submits it to Relay.</small></p><p id=selection><small>No text selected</small></p><textarea id=body placeholder='Comment on the selected text'></textarea><p><button id=add>Add annotation</button></p><div id=comments></div><hr><textarea id=note placeholder='Optional overall note'></textarea><p><button id=send>Send Subspace Result</button></p><p id=status><small>Feedback-only: no Resolution or workflow action.</small></p></aside>
+<aside><h2>Feedback</h2><p><small>Declare your reviewer identity before adding feedback. The review service maintains a separate Relay device receipt per declared identity; the receipt is never sent to the browser.</small></p><label><small>Reviewer identity</small><input id=reviewer placeholder='person:your-name' autocomplete=off></label><p><small>Select text in the artifact, then write a comment. Send creates a Subspace Annotation-only Review v1 Result and submits it to Relay.</small></p><p id=selection><small>No text selected</small></p><textarea id=body placeholder='Comment on the selected text'></textarea><p><button id=add>Add annotation</button></p><div id=comments></div><hr><textarea id=note placeholder='Optional overall note'></textarea><p><button id=send>Send Subspace Result</button></p><p id=status><small>Feedback-only: no Resolution or workflow action.</small></p></aside>
 <script>
 const comments=[]; let quote=''; const $=id=>document.getElementById(id);
 document.addEventListener('selectionchange',()=>{const s=getSelection().toString().trim(); if(s){quote=s;$('selection').textContent='Selected: '+s.slice(0,160)}});
 $('add').onclick=()=>{const body=$('body').value.trim();if(!quote||!body)return;comments.push({quote,feedback:body});$('body').value='';quote='';$('selection').innerHTML='<small>No text selected</small>';$('comments').innerHTML=comments.map(c=>'<div class=comment><small>'+escapeHtml(c.quote)+'</small><br>'+escapeHtml(c.feedback)+'</div>').join('')};
-$('send').onclick=async()=>{const note=$('note').value.trim();$('status').textContent='Submitting…';try{const r=await fetch('/api/submit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({comments,overall_note:note})});const d=await r.json();if(!r.ok)throw Error(d.error);$('status').textContent='Submitted Result '+d.result_id}catch(e){$('status').textContent='Error: '+e.message}};
+$('send').onclick=async()=>{const note=$('note').value.trim(),reviewer=$('reviewer').value.trim();if(!reviewer){$('status').textContent='Enter reviewer identity first.';return}$('status').textContent='Submitting…';try{const r=await fetch('/api/submit',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reviewer,comments,overall_note:note})});const d=await r.json();if(!r.ok)throw Error(d.error);$('status').textContent='Submitted Result '+d.result_id}catch(e){$('status').textContent='Error: '+e.message}};
 function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
 </script>'''
     return template.replace("__REV__", html.escape(artifact["rev"])).replace("__QUESTION__", question).replace("__CONTENT__", content)
 
 
+def reviewer_state(root, reviewer):
+    if not re.fullmatch(r"person:[A-Za-z0-9._@-]{1,128}", reviewer):
+        raise ValueError("reviewer must use person:<stable-name>")
+    return root / "reviewers" / hashlib.sha256(reviewer.encode()).hexdigest()[:24]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Relay-backed Subspace Web reviewer (feedback-only; no Human Review protocol).")
     parser.add_argument("open", nargs="?", help="Open a Relay-backed review")
-    parser.add_argument("--briefing", required=True); parser.add_argument("--reviewer", required=True)
+    parser.add_argument("--briefing", required=True)
     parser.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); parser.add_argument("--state-dir")
     parser.add_argument("--port", type=int, default=0); parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
@@ -61,11 +69,14 @@ def main():
             if self.path != "/api/submit": self.send_error(404); return
             try:
                 data=json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                reviewer=data.get("reviewer", "")
+                reviewer_root=reviewer_state(state / args.briefing, reviewer)
                 feedback={"comments":data.get("comments",[]),"overall_note":data.get("overall_note","")}
-                feedback_path=state / args.briefing / "feedback.json"; feedback_path.parent.mkdir(parents=True,exist_ok=True); feedback_path.write_text(json.dumps(feedback))
-                run("annotations","--briefing",str(package/"briefing.json"),"--feedback",str(feedback_path),"--reviewer",args.reviewer,"--output",str(review))
-                run("build-feedback-result","--briefing",str(package/"briefing.json"),"--review",str(review),"--actor",args.reviewer,"--output",str(result))
-                submitted=run("submit","--briefing",args.briefing,"--review",str(review),"--result",str(result),"--endpoint",args.endpoint,"--state-dir",str(state))
+                feedback_path=reviewer_root / "feedback.json"; feedback_path.parent.mkdir(parents=True,exist_ok=True); feedback_path.write_text(json.dumps(feedback))
+                review=reviewer_root / "review.jsonl"; result=reviewer_root / "result.json"
+                run("annotations","--briefing",str(package/"briefing.json"),"--feedback",str(feedback_path),"--reviewer",reviewer,"--output",str(review))
+                run("build-feedback-result","--briefing",str(package/"briefing.json"),"--review",str(review),"--actor",reviewer,"--output",str(result))
+                submitted=run("submit","--briefing",args.briefing,"--review",str(review),"--result",str(result),"--endpoint",args.endpoint,"--state-dir",str(reviewer_root))
                 response={"result_id":submitted["result_id"]}; body=json.dumps(response).encode(); self.send_response(201); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)
             except Exception as exc:
                 body=json.dumps({"error":str(exc)}).encode(); self.send_response(400); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body)

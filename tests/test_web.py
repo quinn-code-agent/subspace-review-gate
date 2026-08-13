@@ -15,6 +15,13 @@ class RelayWebTests(unittest.TestCase):
         self.assertIn("Relay-backed", result.stdout)
         self.assertIn("feedback-only", result.stdout)
 
+    def test_reviewer_identity_is_collected_per_browser_session_not_cli_wide(self):
+        source = WEB.read_text()
+        self.assertIn("id=reviewer", source)
+        self.assertIn('reviewer=data.get("reviewer", "")', source)
+        self.assertIn("reviewer_state", source)
+        self.assertNotIn('parser.add_argument("--reviewer", required=True)', source)
+
 
 if __name__ == "__main__":
     unittest.main()
