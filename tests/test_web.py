@@ -25,6 +25,12 @@ class RelayWebTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
 
+    def test_annotation_draft_keeps_artifact_range_when_composer_focus_changes_selection(self):
+        source = WEB.read_text()
+        self.assertIn("artifact.contains(candidate.commonAncestorContainer)", source)
+        self.assertIn("draftRange=range.cloneRange()", source)
+        self.assertIn("savedRanges.push(draftRange)", source)
+
     def test_shared_feedback_is_default_off_and_owner_projected_only(self):
         source = WEB.read_text()
         self.assertIn("id=shared", source)
