@@ -44,6 +44,19 @@ class RelayWebTests(unittest.TestCase):
         for marker in ("/api/submit", "Annotation", "feedback-only", "localStorage", "CSS.highlights", "Jump to"):
             self.assertIn(marker, js)
 
+    def test_p1_human_review_parity_is_interactive_and_immutable_safe(self):
+        html = (ROOT / "web" / "chrome.html").read_text()
+        css = (ROOT / "web" / "chrome.css").read_text()
+        js = (ROOT / "web" / "chrome.js").read_text()
+        for marker in ('id="theme"', 'id="shared"', 'id="identity-chip"', 'id="composeKind"', 'id="team"', 'id="status"'):
+            self.assertIn(marker, html)
+        for marker in ('data-theme="dark"', '.remove', '.body-edit', '.toast', '.send:disabled', '@media (prefers-reduced-motion: reduce)'):
+            self.assertIn(marker, css)
+        for marker in ('themeKey', 'toggleTheme', 'editComment', 'deleteComment', 'activateComment', 'keydown', 'Escape', 'Enter', 'showTeamFeedback', 'kind: "comment"'):
+            self.assertIn(marker, js)
+        self.assertNotIn('/api/page/', js)
+        self.assertNotIn('artifact.innerHTML =', js)
+
     def test_annotation_draft_keeps_artifact_range_when_composer_focus_changes_selection(self):
         source = WEB.read_text()
         self.assertIn("artifact.contains(candidate.commonAncestorContainer)", source)
