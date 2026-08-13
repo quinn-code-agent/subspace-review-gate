@@ -39,7 +39,7 @@ class RelayWebTests(unittest.TestCase):
         js = (ROOT / "web" / "chrome.js").read_text()
         for marker in ("class=\"stage\"", "class=\"handle\"", "class=\"rail\"", "class=\"rail-scroll\"", "id=\"compose\"", "class=\"cards\"", "class=\"rail-foot\""):
             self.assertIn(marker, html)
-        for marker in ("--canvas: #eceae4", "--rail-w: 352px", "rgba(245,196,0,.42)", "subspace-saved"):
+        for marker in ("--canvas:#e8e4da", "--rail-w:352px", "rgba(224,173,39,.42)", "subspace-saved"):
             self.assertIn(marker, css)
         for marker in ("/api/submit", "Annotation", "feedback-only", "localStorage", "CSS.highlights", "Jump to"):
             self.assertIn(marker, js)
@@ -50,7 +50,7 @@ class RelayWebTests(unittest.TestCase):
         js = (ROOT / "web" / "chrome.js").read_text()
         for marker in ('id="theme"', 'id="shared"', 'id="identity-chip"', 'id="composeKind"', 'id="team"', 'id="status"'):
             self.assertIn(marker, html)
-        for marker in ('data-theme="dark"', '.remove', '.body-edit', '.toast', '.send:disabled', '@media (prefers-reduced-motion: reduce)'):
+        for marker in ('data-theme="dark"', '.remove', '.body-edit', '.send:disabled', '@media(max-width:800px)'):
             self.assertIn(marker, css)
         for marker in ('themeKey', 'toggleTheme', 'editComment', 'deleteComment', 'activateComment', 'keydown', 'Escape', 'Enter', 'showTeamFeedback', 'kind = "comment"'):
             self.assertIn(marker, js)
@@ -67,6 +67,19 @@ class RelayWebTests(unittest.TestCase):
         source = WEB.read_text()
         self.assertIn('p.add_argument("--host",default="127.0.0.1")', source)
         self.assertIn("ThreadingHTTPServer((args.host,args.port),Handler)", source)
+
+    def test_p3_uses_delegated_mermaid_lightbox_and_theme_aware_surfaces(self):
+        source = WEB.read_text()
+        css = (ROOT / "web" / "chrome.css").read_text()
+        js = (ROOT / "web" / "chrome.js").read_text()
+        self.assertIn("mermaid:open", source)
+        self.assertIn("--artifact-bg", css)
+        self.assertIn("--artifact-fg", css)
+        self.assertIn("--diagram-fg", css)
+        self.assertIn("width:min(100%,1024px)", css)
+        self.assertIn("background:transparent", css)
+        self.assertIn("closest('.mermaid svg')", js)
+        self.assertIn("event.key === 'Escape'", js)
 
     def test_shared_feedback_is_default_off_and_owner_projected_only(self):
         source = WEB.read_text()
