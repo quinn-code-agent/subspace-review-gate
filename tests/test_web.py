@@ -81,6 +81,17 @@ class RelayWebTests(unittest.TestCase):
         self.assertIn("closest('.mermaid svg')", js)
         self.assertIn("event.key === 'Escape'", js)
 
+    def test_mermaid_has_theme_aware_edges_close_control_and_readable_failure(self):
+        source = WEB.read_text()
+        html = (ROOT / "web" / "chrome.html").read_text()
+        css = (ROOT / "web" / "chrome.css").read_text()
+        js = (ROOT / "web" / "chrome.js").read_text()
+        for marker in ('lineColor', 'primaryBorderColor', 'edgeLabelBackground', 'Diagram could not render'):
+            self.assertIn(marker, source)
+        self.assertIn('id="diagram-close"', html)
+        self.assertIn('.diagram-close', css)
+        self.assertIn("$('diagram-close').onclick", js)
+
     def test_shared_feedback_is_default_off_and_owner_projected_only(self):
         source = WEB.read_text()
         self.assertIn("id=shared", source)
