@@ -35,6 +35,9 @@ class PluginRegistrationTests(unittest.TestCase):
             "subspace_review_gate_relay_fetch",
             "subspace_review_gate_relay_annotations",
             "subspace_review_gate_relay_results",
+            "subspace_review_gate_relay_create_room",
+            "subspace_review_gate_relay_disable_room",
+            "subspace_review_gate_relay_revoke_room_session",
         ])
         self.assertTrue(all(entry["toolset"] == "subspace_review_gate" for entry in ctx.tools))
 
