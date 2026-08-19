@@ -31,6 +31,26 @@ class DocumentationTests(unittest.TestCase):
         ):
             self.assertIn(required, text)
 
+    def test_architecture_describes_relay_as_owner_client_not_future_host(self):
+        text = (ROOT / "docs" / "architecture.md").read_text()
+        self.assertIn("Hermes owner client", text)
+        self.assertIn("Room URL capability", text)
+        self.assertIn("does not host a browser", text)
+        self.assertNotIn("potential future **transport adapter**", text)
+
+    def test_readme_documents_relay_room_owner_client_boundary(self):
+        text = (ROOT / "README.md").read_text()
+        for required in (
+            "Room URL is a capability",
+            "subspace_review_gate_relay_create_room",
+            "subspace_review_gate_relay_pull_result",
+            "does not host a browser",
+            "does not create a Resolution",
+            "revoke an arrived reviewer session",
+        ):
+            self.assertIn(required, text)
+        self.assertNotIn("Relay-backed Subspace Web viewer", text)
+
     def test_readme_links_both_new_documents(self):
         text = (ROOT / "README.md").read_text()
         self.assertIn("docs/setup-for-hermes-agents.md", text)

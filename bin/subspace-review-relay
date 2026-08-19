@@ -278,14 +278,14 @@ def pull_result(args):
     state = owner_state_dir(args.state_dir); receipt_path = state / "owners" / f"{briefing_id}.json"
     if not receipt_path.exists(): fail("owner receipt is required to pull Relay Results")
     receipt = load_json(receipt_path, "owner receipt"); endpoint = args.endpoint.rstrip("/")
-    root = Path(args.output_dir).resolve(); root.mkdir(parents=True, exist_ok=True)
     headers = auth_headers(receipt)
     review = fetch_bytes_request(endpoint + f"/api/briefing/{briefing_id}/result/{result_id}/review.jsonl", headers)
     result = fetch_bytes_request(endpoint + f"/api/briefing/{briefing_id}/result/{result_id}/result.json", headers)
-    (root / "review.jsonl").write_bytes(review); (root / "result.json").write_bytes(result)
     payload = json.loads(result)
     if payload.get("type") != "review-v1-result" or payload.get("mode") != "feedback" or payload.get("briefing") != briefing_id:
         fail("pulled Result is not a feedback-only Review v1 Result for this Briefing")
+    root = Path(args.output_dir).resolve(); root.mkdir(parents=True, exist_ok=True)
+    (root / "review.jsonl").write_bytes(review); (root / "result.json").write_bytes(result)
     print(json.dumps({"ok": True, "briefing": briefing_id, "result_id": result_id, "review_sha256": hashlib.sha256(review).hexdigest(), "result_sha256": hashlib.sha256(result).hexdigest(), "output_dir": str(root)}, indent=2))
 
 

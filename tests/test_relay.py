@@ -101,7 +101,7 @@ class RelayPackageTests(unittest.TestCase):
                 seen["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 raw = json.dumps({"roomId": "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "briefingId": briefing_id, "origin": "http://127.0.0.1"}).encode()
                 self.send_response(201); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
-            def log_message(self, *_): pass
+            def log_message(self, format, *args): pass
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         try:
@@ -131,7 +131,7 @@ class RelayPackageTests(unittest.TestCase):
                 payload = {"disabledAt": "2026-08-18T00:00:00Z"} if self.path.endswith("/disable") else {"revokedAt": "2026-08-18T00:01:00Z"}
                 raw = json.dumps(payload).encode()
                 self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
-            def log_message(self, *_): pass
+            def log_message(self, format, *args): pass
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         try:
@@ -158,7 +158,7 @@ class RelayPackageTests(unittest.TestCase):
             def do_GET(self):
                 raw = json.dumps({"results": raw_results, "listStale": False}).encode()
                 self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
-            def log_message(self, *_): pass
+            def log_message(self, format, *args): pass
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         try:
@@ -173,6 +173,30 @@ class RelayPackageTests(unittest.TestCase):
             "participant": "par_bbbbbbbbbbbbbbbbbbbbbbbbbb",
             "attribution": "person:kent (self-declared) · par_bbbbbbbbbbbbbbbbbbbbbbbbbb",
         }])
+
+    def test_pull_result_refuses_invalid_result_before_writing_any_bytes(self):
+        briefing_id = "briefing:0123456789abcdef0123456789abcdef"
+        result_id = "res_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+        state = self.root / "state"
+        receipt = state / "owners" / f"{briefing_id}.json"
+        receipt.parent.mkdir(parents=True)
+        receipt.write_text(json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                raw = b'{"type":"review-v1-result","mode":"decision","briefing":"briefing:other"}' if self.path.endswith("result.json") else b'{"type":"Annotation"}\n'
+                self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
+            def log_message(self, format, *args): pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        output = self.root / "pulled"
+        try:
+            result = run("pull-result", "--briefing", briefing_id, "--result-id", result_id, "--output-dir", str(output), "--state-dir", str(state), "--endpoint", f"http://127.0.0.1:{server.server_port}", check=False)
+        finally:
+            server.shutdown(); thread.join(); server.server_close()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("feedback-only", result.stderr)
+        self.assertFalse((output / "review.jsonl").exists())
+        self.assertFalse((output / "result.json").exists())
 
     def test_annotations_accept_native_human_review_feedback_with_explicit_actor(self):
         feedback = self.root / "human-review.json"

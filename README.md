@@ -159,51 +159,59 @@ The four corresponding Hermes tools are `subspace_review_gate_relay_package`, `s
 
 Relay share URLs are bearer capabilities: do not publish sensitive artifact bytes. Stage data is separate from production data but is real remote storage and uses real Relay quotas.
 
-## Phase 2 — Relay-backed Subspace Web viewer
+## Relay-hosted Review Room — Hermes owner client
 
-`bin/subspace-relay-web` is the replacement direction for Human Review's **transport**. It retains the browser interaction shell—rendered artifact, text selection, comment composition, and Send—but it owns no review protocol.
+The plugin is the **owner client** for Relay's hosted Room; it does not host a browser,
+create public ingress, or own reviewer session authority. Relay hosts the browser surface
+and stores exact feedback bytes. Hermes verifies/publishes the immutable package, runs
+owner-authenticated lifecycle calls, and retrieves the feedback evidence.
 
 ```text
-Relay fetch + digest verification
-→ browser interaction
-→ Subspace Annotation JSONL
-→ feedback-only Review v1 Result
-→ Relay Result submission
-→ owner-only Result pull
+verified Briefing + package
+→ private owner receipt
+→ create Room
+→ explicit human delivery of the Room URL capability
+→ Relay-hosted browser feedback-only Result
+→ owner list / pull + SHA-256 verification
+→ optional disable Room or revoke an arrived reviewer session
 ```
 
-Start a local web shell for a published Briefing:
+The **Room URL is a capability**. It is not printed by this plugin, posted to Slack,
+fan-out, logged as an operational status, or delivered by an agent automatically. A human
+owner decides whether and how it is handed to an internal, synthetic reviewer. A second
+browser arrival is another reviewer; there is no invitation creation, redemption, or
+pre-arrival revocation in this protocol.
 
-```bash
-python3 bin/subspace-relay-web open \
-  --briefing briefing:<32-lowercase-hex> \
-  --reviewer person:<reviewer> \
-  --no-browser
-```
+### Owner operations
 
-The shell fetches and verifies the Relay package before rendering. `Send` creates only `Annotation` entries and a `review-v1-result` with `mode: "feedback"`; it contains no `Resolution` and cannot route a workflow. The reviewer transport receipt is private local state. Owners inspect/pull Relay feedback through their private owner receipt:
+After publishing a verified package, the following Hermes tools operate only with the
+private `0600` owner receipt under `$HERMES_HOME/subspace-review-gate/relay/owners/`:
 
-```bash
-bin/subspace-review-relay results --briefing briefing:<id>
-bin/subspace-review-relay pull-result \
-  --briefing briefing:<id> --result-id res_<id> --output-dir ./result
-```
+- `subspace_review_gate_relay_create_room` creates a Room for the published Briefing.
+- `subspace_review_gate_relay_results` lists owner-visible feedback summaries. Claimed
+  names remain self-declared; a Relay participant identifier is an operator discriminator,
+  not verified identity or workflow authority.
+- `subspace_review_gate_relay_pull_result` pulls one feedback-only Result and writes its
+  exact `review.jsonl` and `result.json` bytes locally after validating the Briefing,
+  result mode, and SHA-256 digests.
+- `subspace_review_gate_relay_disable_room` disables the Room for all sessions.
+- `subspace_review_gate_relay_revoke_room_session` can revoke an arrived reviewer session
+  without disabling sibling sessions.
 
-### Why this is not the old Human Review protocol
+The equivalent CLI operations are `create-room`, `results`, `pull-result`,
+`disable-room`, and `revoke-room-session`. No operation exposes a device secret, owner
+receipt, browser session token, CSRF value, or capability URL.
 
-The old path was `Human Review feedback JSON → adapter → Annotation`. Phase 2's Web shell directly writes the Subspace objects and submits their verbatim bytes to Relay. Human Review-specific session, polling, batch, and acknowledgement semantics are absent from the Phase 2 viewer.
+### Safety boundary
 
-**Safety boundary:** Relay accepts and stores Result bytes; it does not interpret route semantics, authorize an approver, mint a binding Resolution, or modify workflow state. Slack remains a separately projected gate UI; an authorized external controller/leg remains the only workflow writer.
+The plugin does not create a Resolution, does not interpret route semantics, does not
+modify workflow state, and does not host a browser. Relay Results are feedback evidence
+only. An authorized external controller/leg remains the only workflow writer. The browser
+never receives the owner device pair or receipt.
 
-The owner may opt in to a read-only, sanitized projection of committed feedback:
-
-```bash
-python3 bin/subspace-relay-web open \
-  --briefing briefing:<id> \
-  --shared-feedback
-```
-
-The UI always shows **Show team feedback**, but the corresponding endpoint is **off by default** and returns no content unless the owner starts the shell with `--shared-feedback`. When enabled, the owner service alone lists and pulls Relay Results using its private owner receipt, extracts portable Annotation fields (`by`, selected quote, body), and serves only that projection to the browser. It never exposes owner receipts or raw Result files. This remains advisory, read-only feedback and does not create a Resolution.
+The plugin makes local fake-server tests possible for owner-call wiring. That is not a
+claim that a Room has been deployed, a reviewer journey has completed, or a capability URL
+has been handed to anyone.
 
 ## Slack gate UI
 

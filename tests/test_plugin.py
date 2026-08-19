@@ -35,11 +35,32 @@ class PluginRegistrationTests(unittest.TestCase):
             "subspace_review_gate_relay_fetch",
             "subspace_review_gate_relay_annotations",
             "subspace_review_gate_relay_results",
+            "subspace_review_gate_relay_pull_result",
             "subspace_review_gate_relay_create_room",
             "subspace_review_gate_relay_disable_room",
             "subspace_review_gate_relay_revoke_room_session",
         ])
         self.assertTrue(all(entry["toolset"] == "subspace_review_gate" for entry in ctx.tools))
+
+    def test_plugin_exposes_owner_result_pull_with_private_state(self):
+        ctx = Context()
+        PLUGIN.register(ctx)
+        entry = next(tool for tool in ctx.tools if tool["name"] == "subspace_review_gate_relay_pull_result")
+        parameters = entry["schema"]["parameters"]
+        self.assertEqual(parameters["required"], ["briefing", "result_id", "output_dir"])
+        self.assertIn("state_dir", parameters["properties"])
+        self.assertIn("feedback-only", entry["schema"]["description"])
+
+    def test_plugin_manifest_declares_every_relay_owner_tool(self):
+        tools = (ROOT / "plugin.yaml").read_text()
+        for name in (
+            "subspace_review_gate_relay_results",
+            "subspace_review_gate_relay_pull_result",
+            "subspace_review_gate_relay_create_room",
+            "subspace_review_gate_relay_disable_room",
+            "subspace_review_gate_relay_revoke_room_session",
+        ):
+            self.assertIn(name, tools)
 
     def test_plugin_returns_json_error_for_missing_briefing(self):
         result = json.loads(PLUGIN.verify({"briefing": "/definitely/missing.json"}))
