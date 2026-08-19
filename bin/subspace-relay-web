@@ -22,8 +22,8 @@ const $=id=>document.getElementById(id),mobile=matchMedia('(max-width:800px)'),i
 def owner_results(briefing_id,endpoint,state): return run('results','--briefing',briefing_id,'--endpoint',endpoint,'--state-dir',str(state))
 def shared_annotations(briefing_id,endpoint,state):
  out=[]; root=state/briefing_id/'shared'
- for summary in owner_results(briefing_id,endpoint,state).get('results',[]):
-  rid=summary.get('resultId');
+ for summary in owner_results(briefing_id,endpoint,state).get('operator_summaries',[]):
+  rid=summary.get('result_id');
   if not rid: continue
   pulled=root/rid; run('pull-result','--briefing',briefing_id,'--result-id',rid,'--output-dir',str(pulled),'--endpoint',endpoint,'--state-dir',str(state)); result=json.loads((pulled/'result.json').read_text())
   for a in result.get('annotations',[]):

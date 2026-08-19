@@ -214,6 +214,26 @@ The plugin makes local fake-server tests possible for owner-call wiring. That is
 claim that a Room has been deployed, a reviewer journey has completed, or a capability URL
 has been handed to anyone.
 
+## Legacy local Relay Web viewer
+
+`bin/subspace-relay-web` remains an optional **local development viewer** for a published
+Briefing. It is not a Relay Room host, does not replace Relay’s browser session boundary,
+and must not be used to distribute a Room/share capability or claim hosted-room evidence.
+It binds to `127.0.0.1` by default; any explicit non-loopback `--host` use is a separate
+operator-controlled exposure decision, not a plugin delivery feature.
+
+```bash
+python3 bin/subspace-relay-web open \
+  --briefing briefing:<32-lowercase-hex> \
+  --no-browser
+```
+
+It fetches and verifies the immutable package before rendering and submits only a
+feedback-mode Result. `--shared-feedback` is **off by default**. When explicitly enabled,
+the local process alone lists/pulls owner Results, filters them to portable annotations,
+and returns only that projection to its browser; it never returns owner receipts or raw
+Result files.
+
 ## Slack gate UI
 
 Slack is a projection, not the portable log or workflow writer. The posted message must show:
