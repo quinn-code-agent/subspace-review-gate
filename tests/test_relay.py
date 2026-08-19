@@ -80,6 +80,29 @@ class RelayPackageTests(unittest.TestCase):
         self.assertRegex(saved["deviceSecret"], r"^sec_[a-z2-7]{52}$")
         self.assertFalse("deviceSecret" in result.stdout)
 
+    def test_publish_keeps_share_capability_in_private_receipt(self):
+        package = self.root / "package"
+        run("package", "--briefing", str(self.briefing), "--output-dir", str(package))
+        state = self.root / "state"
+        share_url = "https://relay.example/r/capability-not-for-output"
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                raw = json.dumps({"briefingId": "briefing:0123456789abcdef0123456789abcdef", "shareUrl": share_url}).encode()
+                self.send_response(201); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
+            def log_message(self, format, *args): pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            result = run("publish", "--package", str(package), "--state-dir", str(state), "--endpoint", f"http://127.0.0.1:{server.server_port}")
+        finally:
+            server.shutdown(); thread.join(); server.server_close()
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertNotIn("share_url", payload)
+        self.assertNotIn(share_url, result.stdout)
+        receipt = json.loads((state / "owners" / "briefing:0123456789abcdef0123456789abcdef.json").read_text())
+        self.assertEqual(receipt["shareUrl"], share_url)
+
     def test_create_room_uses_private_owner_receipt_and_frozen_owner_route(self):
         briefing_id = "briefing:0123456789abcdef0123456789abcdef"
         state = self.root / "state"
@@ -111,7 +134,12 @@ class RelayPackageTests(unittest.TestCase):
             server.shutdown(); thread.join(); server.server_close()
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["room_id"], "room_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+        self.assertRegex(payload["room_ref"], r"^roomref_[a-z2-7]{26}$")
+        self.assertNotIn("room_id", payload)
+        self.assertNotIn("origin", payload)
+        room = state / "rooms" / briefing_id / f"{payload['room_ref']}.json"
+        self.assertEqual(json.loads(room.read_text())["roomId"], "room_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+        self.assertEqual(json.loads(room.read_text())["origin"], "http://127.0.0.1")
         self.assertEqual(seen["path"], "/api/room")
         self.assertEqual(seen["body"], {"briefingId": briefing_id})
         self.assertEqual(seen["device"], "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa")
@@ -124,6 +152,10 @@ class RelayPackageTests(unittest.TestCase):
         receipt = state / "owners" / f"{briefing_id}.json"
         receipt.parent.mkdir(parents=True)
         receipt.write_text(json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
+        room_ref = "roomref_aaaaaaaaaaaaaaaaaaaaaaaaaa"
+        room = state / "rooms" / briefing_id / f"{room_ref}.json"
+        room.parent.mkdir(parents=True)
+        room.write_text(json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "roomId": "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "origin": "http://unused.example"}))
         seen = []
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -136,8 +168,9 @@ class RelayPackageTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         try:
             endpoint = f"http://127.0.0.1:{server.server_port}"
-            disabled = run("disable-room", "--briefing", briefing_id, "--room-id", "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "--state-dir", str(state), "--endpoint", endpoint)
-            revoked = run("revoke-room-session", "--briefing", briefing_id, "--room-id", "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "--session-id", "ses_bbbbbbbbbbbbbbbbbbbbbbbbbb", "--state-dir", str(state), "--endpoint", endpoint)
+            room.write_text(json.dumps({"briefing": briefing_id, "endpoint": endpoint, "roomId": "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "origin": endpoint}))
+            disabled = run("disable-room", "--briefing", briefing_id, "--room-ref", room_ref, "--state-dir", str(state))
+            revoked = run("revoke-room-session", "--briefing", briefing_id, "--room-ref", room_ref, "--session-id", "ses_bbbbbbbbbbbbbbbbbbbbbbbbbb", "--state-dir", str(state))
         finally:
             server.shutdown(); thread.join(); server.server_close()
         self.assertEqual(json.loads(disabled.stdout)["disabled_at"], "2026-08-18T00:00:00Z")

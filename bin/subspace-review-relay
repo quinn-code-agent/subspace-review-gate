@@ -159,7 +159,7 @@ def publish(args):
         fail("Relay publish response did not return matching Briefing identity and share URL")
     receipt["shareUrl"] = response_data["shareUrl"]
     write_private_json(receipt_path, receipt)
-    print(json.dumps({"ok": True, "briefing": briefing["id"], "share_url": response_data["shareUrl"], "receipt": str(receipt_path)}, indent=2))
+    print(json.dumps({"ok": True, "briefing": briefing["id"], "receipt": str(receipt_path)}, indent=2))
 
 
 def auth_headers(receipt):
@@ -186,6 +186,30 @@ def room_identifier(value, label):
     return value
 
 
+def room_ref(value):
+    if not isinstance(value, str) or not re.fullmatch(r"roomref_[a-z2-7]{26}", value):
+        fail("valid private Room reference is required")
+    return value
+
+
+def room_record_path(briefing_id, state_dir, reference):
+    return owner_state_dir(state_dir) / "rooms" / briefing_id / f"{room_ref(reference)}.json"
+
+
+def load_room_record(briefing_id, state_dir, reference):
+    record_path = room_record_path(briefing_id, state_dir, reference)
+    if not record_path.exists():
+        fail("private Room reference is not available")
+    record = load_json(record_path, "private Room record")
+    if record.get("briefing") != briefing_id:
+        fail("private Room record does not belong to the requested Briefing")
+    room_id = room_identifier(record.get("roomId"), "Room id")
+    endpoint = record.get("endpoint")
+    if not isinstance(endpoint, str) or not endpoint:
+        fail("private Room record has no Relay endpoint")
+    return room_id, endpoint.rstrip("/")
+
+
 def owner_post(endpoint, path, receipt, body=None):
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode()
     headers = {**auth_headers(receipt), "Accept": "application/json"}
@@ -210,30 +234,31 @@ def create_room(args):
         fail("owner receipt has no Relay endpoint")
     payload = owner_post(endpoint, "/api/room", receipt, {"briefingId": args.briefing})
     room_id = room_identifier(payload.get("roomId"), "Room id")
-    if payload.get("briefingId") != args.briefing or not isinstance(payload.get("origin"), str) or not payload["origin"]:
+    origin = payload.get("origin")
+    if payload.get("briefingId") != args.briefing or not isinstance(origin, str) or not origin:
         fail("Relay Room create response did not return matching briefingId and origin")
-    print(json.dumps({"ok": True, "briefing": args.briefing, "room_id": room_id, "origin": payload["origin"]}, indent=2))
+    reference = "roomref_" + base32_unpadded(16)
+    write_private_json(room_record_path(args.briefing, args.state_dir, reference), {"version": 1, "briefing": args.briefing, "endpoint": endpoint, "origin": origin, "roomId": room_id})
+    print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": reference}, indent=2))
 
 
 def disable_room(args):
     receipt = load_owner_receipt(args.briefing, args.state_dir)
-    room_id = room_identifier(args.room_id, "Room id")
-    endpoint = args.endpoint.rstrip("/") if args.endpoint else receipt.get("endpoint", "").rstrip("/")
+    room_id, endpoint = load_room_record(args.briefing, args.state_dir, args.room_ref)
     payload = owner_post(endpoint, f"/api/room/{room_id}/disable", receipt)
     if not isinstance(payload.get("disabledAt"), str) or not payload["disabledAt"]:
         fail("Relay Room disable response did not return disabledAt")
-    print(json.dumps({"ok": True, "briefing": args.briefing, "room_id": room_id, "disabled_at": payload["disabledAt"]}, indent=2))
+    print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "disabled_at": payload["disabledAt"]}, indent=2))
 
 
 def revoke_room_session(args):
     receipt = load_owner_receipt(args.briefing, args.state_dir)
-    room_id = room_identifier(args.room_id, "Room id")
+    room_id, endpoint = load_room_record(args.briefing, args.state_dir, args.room_ref)
     session_id = room_identifier(args.session_id, "session id")
-    endpoint = args.endpoint.rstrip("/") if args.endpoint else receipt.get("endpoint", "").rstrip("/")
     payload = owner_post(endpoint, f"/api/room/{room_id}/session/{session_id}/revoke", receipt)
     if not isinstance(payload.get("revokedAt"), str) or not payload["revokedAt"]:
         fail("Relay session revoke response did not return revokedAt")
-    print(json.dumps({"ok": True, "briefing": args.briefing, "room_id": room_id, "session_id": session_id, "revoked_at": payload["revokedAt"]}, indent=2))
+    print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "revoked_at": payload["revokedAt"]}, indent=2))
 
 
 def owner_results(args):
@@ -467,8 +492,8 @@ def main():
     p = commands.add_parser("package"); p.add_argument("--briefing", required=True); p.add_argument("--output-dir", required=True); p.set_defaults(fn=package)
     pub = commands.add_parser("publish"); pub.add_argument("--package", required=True); pub.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); pub.add_argument("--state-dir"); pub.add_argument("--dry-run", action="store_true"); pub.set_defaults(fn=publish)
     create_p = commands.add_parser("create-room"); create_p.add_argument("--briefing", required=True); create_p.add_argument("--endpoint"); create_p.add_argument("--state-dir"); create_p.set_defaults(fn=create_room)
-    disable_p = commands.add_parser("disable-room"); disable_p.add_argument("--briefing", required=True); disable_p.add_argument("--room-id", required=True); disable_p.add_argument("--endpoint"); disable_p.add_argument("--state-dir"); disable_p.set_defaults(fn=disable_room)
-    revoke_p = commands.add_parser("revoke-room-session"); revoke_p.add_argument("--briefing", required=True); revoke_p.add_argument("--room-id", required=True); revoke_p.add_argument("--session-id", required=True); revoke_p.add_argument("--endpoint"); revoke_p.add_argument("--state-dir"); revoke_p.set_defaults(fn=revoke_room_session)
+    disable_p = commands.add_parser("disable-room"); disable_p.add_argument("--briefing", required=True); disable_p.add_argument("--room-ref", required=True); disable_p.add_argument("--state-dir"); disable_p.set_defaults(fn=disable_room)
+    revoke_p = commands.add_parser("revoke-room-session"); revoke_p.add_argument("--briefing", required=True); revoke_p.add_argument("--room-ref", required=True); revoke_p.add_argument("--session-id", required=True); revoke_p.add_argument("--state-dir"); revoke_p.set_defaults(fn=revoke_room_session)
     owner_p = commands.add_parser("results"); owner_p.add_argument("--briefing", required=True); owner_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); owner_p.add_argument("--state-dir"); owner_p.set_defaults(fn=owner_results)
     pull_p = commands.add_parser("pull-result"); pull_p.add_argument("--briefing", required=True); pull_p.add_argument("--result-id", required=True); pull_p.add_argument("--output-dir", required=True); pull_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); pull_p.add_argument("--state-dir"); pull_p.set_defaults(fn=pull_result)
     submit_p = commands.add_parser("submit"); submit_p.add_argument("--briefing", required=True); submit_p.add_argument("--review", required=True); submit_p.add_argument("--result", required=True); submit_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); submit_p.add_argument("--state-dir"); submit_p.add_argument("--dry-run", action="store_true"); submit_p.set_defaults(fn=submit)

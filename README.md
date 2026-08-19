@@ -172,7 +172,7 @@ verified Briefing + package
 → create Room
 → explicit human delivery of the Room URL capability
 → Relay-hosted browser feedback-only Result
-→ owner list / pull + SHA-256 verification
+→ owner list / pull + SHA-256 digest record
 → optional disable Room or revoke an arrived reviewer session
 ```
 
@@ -192,11 +192,12 @@ private `0600` owner receipt under `$HERMES_HOME/subspace-review-gate/relay/owne
   names remain self-declared; a Relay participant identifier is an operator discriminator,
   not verified identity or workflow authority.
 - `subspace_review_gate_relay_pull_result` pulls one feedback-only Result and writes its
-  exact `review.jsonl` and `result.json` bytes locally after validating the Briefing,
-  result mode, and SHA-256 digests.
-- `subspace_review_gate_relay_disable_room` disables the Room for all sessions.
+  exact `review.jsonl` and `result.json` bytes locally after validating the Briefing and
+  result mode; it records SHA-256 digests for an audit trail.
+- `subspace_review_gate_relay_disable_room` disables the Room for all sessions using the
+  non-network `room_ref` returned by creation.
 - `subspace_review_gate_relay_revoke_room_session` can revoke an arrived reviewer session
-  without disabling sibling sessions.
+  without disabling sibling sessions, using that same `room_ref`.
 
 The equivalent CLI operations are `create-room`, `results`, `pull-result`,
 `disable-room`, and `revoke-room-session`. No operation exposes a device secret, owner
