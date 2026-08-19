@@ -193,7 +193,7 @@ private `0600` owner receipt under `$HERMES_HOME/subspace-review-gate/relay/owne
   not verified identity or workflow authority.
 - `subspace_review_gate_relay_pull_result` pulls one feedback-only Result and writes its
   exact `review.jsonl` and `result.json` bytes locally after validating the Briefing and
-  result mode; it records SHA-256 digests for an audit trail.
+  result mode; it reports SHA-256 digests with the successful pull output.
 - `subspace_review_gate_relay_disable_room` disables the Room for all sessions using the
   non-network `room_ref` returned by creation.
 - `subspace_review_gate_relay_revoke_room_session` can revoke an arrived reviewer session
