@@ -140,6 +140,7 @@ class RelayPackageTests(unittest.TestCase):
         room = state / "rooms" / briefing_id / f"{payload['room_ref']}.json"
         self.assertEqual(json.loads(room.read_text())["roomId"], "room_aaaaaaaaaaaaaaaaaaaaaaaaaa")
         self.assertEqual(json.loads(room.read_text())["origin"], "http://127.0.0.1")
+        self.assertEqual(room.stat().st_mode & 0o777, 0o600)
         self.assertEqual(seen["path"], "/api/room")
         self.assertEqual(seen["body"], {"briefingId": briefing_id})
         self.assertEqual(seen["device"], "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa")
@@ -186,7 +187,7 @@ class RelayPackageTests(unittest.TestCase):
         receipt = state / "owners" / f"{briefing_id}.json"
         receipt.parent.mkdir(parents=True)
         receipt.write_text(json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
-        raw_results = [{"resultId": "res_aaaaaaaaaaaaaaaaaaaaaaaaaa", "actor": "person:kent", "participant": "par_bbbbbbbbbbbbbbbbbbbbbbbbbb"}]
+        raw_results = [{"resultId": "res_aaaaaaaaaaaaaaaaaaaaaaaaaa", "actor": "person:kent", "participant": "par_bbbbbbbbbbbbbbbbbbbbbbbbbb", "untrustedCapability": "https://relay.example/r/not-for-output"}]
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 raw = json.dumps({"results": raw_results, "listStale": False}).encode()
@@ -199,7 +200,8 @@ class RelayPackageTests(unittest.TestCase):
         finally:
             server.shutdown(); thread.join(); server.server_close()
         payload = json.loads(result.stdout)
-        self.assertEqual(payload["results"], raw_results)
+        self.assertNotIn("results", payload)
+        self.assertNotIn("untrustedCapability", result.stdout)
         self.assertEqual(payload["operator_summaries"], [{
             "result_id": "res_aaaaaaaaaaaaaaaaaaaaaaaaaa",
             "claimed_name": "person:kent",

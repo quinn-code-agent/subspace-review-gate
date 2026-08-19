@@ -293,7 +293,7 @@ def owner_results(args):
             if participant:
                 attribution += " · " + participant
             operator_summaries.append({"result_id": result.get("resultId"), "claimed_name": claimed_name, "participant": participant, "attribution": attribution})
-    print(json.dumps({"ok": True, "briefing": briefing_id, "results": results, "operator_summaries": operator_summaries, "listStale": payload.get("listStale", False)}, indent=2))
+    print(json.dumps({"ok": True, "briefing": briefing_id, "result_count": len(results) if isinstance(results, list) else 0, "operator_summaries": operator_summaries, "listStale": payload.get("listStale", False)}, indent=2))
 
 
 def pull_result(args):
