@@ -152,18 +152,121 @@ def publish(args):
         with urllib.request.urlopen(request, timeout=45) as response:
             response_data = json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        fail(f"Relay publish refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+        fail(f"Relay publish refused ({exc.code})")
     except OSError as exc:
         fail(f"Relay publish failed: {exc}")
     if response_data.get("briefingId") != briefing["id"] or not response_data.get("shareUrl"):
         fail("Relay publish response did not return matching Briefing identity and share URL")
     receipt["shareUrl"] = response_data["shareUrl"]
     write_private_json(receipt_path, receipt)
-    print(json.dumps({"ok": True, "briefing": briefing["id"], "share_url": response_data["shareUrl"], "receipt": str(receipt_path)}, indent=2))
+    print(json.dumps({"ok": True, "briefing": briefing["id"], "receipt": str(receipt_path)}, indent=2))
 
 
 def auth_headers(receipt):
     return {"X-Subspace-Device": receipt["deviceId"], "Authorization": f"Bearer {receipt['deviceSecret']}"}
+
+
+def load_owner_receipt(briefing_id, state_dir):
+    if not BRIEFING_ID.fullmatch(briefing_id):
+        fail("owner operation requires Briefing id briefing:<32 lowercase hex>")
+    receipt_path = owner_state_dir(state_dir) / "owners" / f"{briefing_id}.json"
+    if not receipt_path.exists():
+        fail("owner receipt is required for Relay Room control")
+    receipt = load_json(receipt_path, "owner receipt")
+    if receipt.get("briefing") != briefing_id:
+        fail("owner receipt does not belong to the requested Briefing")
+    if not isinstance(receipt.get("deviceId"), str) or not isinstance(receipt.get("deviceSecret"), str):
+        fail("owner receipt has no usable device credentials")
+    return receipt
+
+
+def room_identifier(value, label):
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_]{1,127}", value):
+        fail(f"valid {label} is required")
+    return value
+
+
+def room_ref(value):
+    if not isinstance(value, str) or not re.fullmatch(r"roomref_[a-z2-7]{26}", value):
+        fail("valid private Room reference is required")
+    return value
+
+
+def room_record_path(briefing_id, state_dir, reference):
+    return owner_state_dir(state_dir) / "rooms" / briefing_id / f"{room_ref(reference)}.json"
+
+
+def load_room_record(briefing_id, state_dir, reference):
+    record_path = room_record_path(briefing_id, state_dir, reference)
+    if not record_path.exists():
+        fail("private Room reference is not available")
+    record = load_json(record_path, "private Room record")
+    if record.get("briefing") != briefing_id:
+        fail("private Room record does not belong to the requested Briefing")
+    room_id = room_identifier(record.get("roomId"), "Room id")
+    endpoint = record.get("endpoint")
+    if not isinstance(endpoint, str) or not endpoint:
+        fail("private Room record has no Relay endpoint")
+    return room_id, endpoint.rstrip("/")
+
+
+def rfc3339_timestamp(value, label):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z", value):
+        fail(f"Relay Room control did not return valid {label} timestamp")
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        fail(f"Relay Room control did not return valid {label} timestamp")
+    return parsed.astimezone(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def owner_post(endpoint, path, receipt, body=None):
+    data = None if body is None else json.dumps(body, separators=(",", ":")).encode()
+    headers = {**auth_headers(receipt), "Accept": "application/json"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(endpoint.rstrip("/") + path, data=data, method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        fail(f"Relay Room control refused ({exc.code})")
+    except OSError as exc:
+        fail(f"Relay Room control failed: {exc}")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("Relay Room control returned invalid JSON")
+
+
+def create_room(args):
+    receipt = load_owner_receipt(args.briefing, args.state_dir)
+    endpoint = args.endpoint.rstrip("/") if args.endpoint else receipt.get("endpoint", "").rstrip("/")
+    if not endpoint:
+        fail("owner receipt has no Relay endpoint")
+    payload = owner_post(endpoint, "/api/room", receipt, {"briefingId": args.briefing})
+    room_id = room_identifier(payload.get("roomId"), "Room id")
+    origin = payload.get("origin")
+    if payload.get("briefingId") != args.briefing or not isinstance(origin, str) or not origin:
+        fail("Relay Room create response did not return matching briefingId and origin")
+    reference = "roomref_" + base32_unpadded(16)
+    write_private_json(room_record_path(args.briefing, args.state_dir, reference), {"version": 1, "briefing": args.briefing, "endpoint": endpoint, "origin": origin, "roomId": room_id})
+    print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": reference}, indent=2))
+
+
+def disable_room(args):
+    receipt = load_owner_receipt(args.briefing, args.state_dir)
+    room_id, endpoint = load_room_record(args.briefing, args.state_dir, args.room_ref)
+    payload = owner_post(endpoint, f"/api/room/{room_id}/disable", receipt)
+    disabled_at = rfc3339_timestamp(payload.get("disabledAt"), "disabledAt")
+    print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "disabled_at": disabled_at}, indent=2))
+
+
+def revoke_room_session(args):
+    receipt = load_owner_receipt(args.briefing, args.state_dir)
+    room_id, endpoint = load_room_record(args.briefing, args.state_dir, args.room_ref)
+    session_id = room_identifier(args.session_id, "session id")
+    payload = owner_post(endpoint, f"/api/room/{room_id}/session/{session_id}/revoke", receipt)
+    revoked_at = rfc3339_timestamp(payload.get("revokedAt"), "revokedAt")
+    print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "revoked_at": revoked_at}, indent=2))
 
 
 def owner_results(args):
@@ -181,10 +284,27 @@ def owner_results(args):
         with urllib.request.urlopen(request, timeout=45) as response:
             payload = json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        fail(f"Relay Results pull refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+        fail(f"Relay Results pull refused ({exc.code})")
     except OSError as exc:
         fail(f"Relay Results pull failed: {exc}")
-    print(json.dumps({"ok": True, "briefing": briefing_id, "results": payload.get("results", []), "listStale": payload.get("listStale", False)}, indent=2))
+    results = payload.get("results", [])
+    operator_summaries = []
+    if isinstance(results, list):
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            result_id = result.get("resultId")
+            if not isinstance(result_id, str) or not re.fullmatch(r"res_[a-z2-7]{26}", result_id):
+                result_id = None
+            raw_actor = result.get("actor")
+            raw_participant = result.get("participant")
+            claimed_name = raw_actor if isinstance(raw_actor, str) and re.fullmatch(r"person:[a-z0-9._@-]{1,128}", raw_actor) else None
+            participant = raw_participant if isinstance(raw_participant, str) and re.fullmatch(r"par_[a-z2-7]{26}", raw_participant) else None
+            attribution = (claimed_name or "unknown claimed name") + " (self-declared)"
+            if participant:
+                attribution += " · " + participant
+            operator_summaries.append({"result_id": result_id, "claimed_name": claimed_name, "participant": participant, "attribution": attribution})
+    print(json.dumps({"ok": True, "briefing": briefing_id, "result_count": len(results) if isinstance(results, list) else 0, "operator_summaries": operator_summaries, "listStale": payload.get("listStale") is True}, indent=2))
 
 
 def pull_result(args):
@@ -194,21 +314,21 @@ def pull_result(args):
     state = owner_state_dir(args.state_dir); receipt_path = state / "owners" / f"{briefing_id}.json"
     if not receipt_path.exists(): fail("owner receipt is required to pull Relay Results")
     receipt = load_json(receipt_path, "owner receipt"); endpoint = args.endpoint.rstrip("/")
-    root = Path(args.output_dir).resolve(); root.mkdir(parents=True, exist_ok=True)
     headers = auth_headers(receipt)
     review = fetch_bytes_request(endpoint + f"/api/briefing/{briefing_id}/result/{result_id}/review.jsonl", headers)
     result = fetch_bytes_request(endpoint + f"/api/briefing/{briefing_id}/result/{result_id}/result.json", headers)
-    (root / "review.jsonl").write_bytes(review); (root / "result.json").write_bytes(result)
     payload = json.loads(result)
     if payload.get("type") != "review-v1-result" or payload.get("mode") != "feedback" or payload.get("briefing") != briefing_id:
         fail("pulled Result is not a feedback-only Review v1 Result for this Briefing")
+    root = Path(args.output_dir).resolve(); root.mkdir(parents=True, exist_ok=True)
+    (root / "review.jsonl").write_bytes(review); (root / "result.json").write_bytes(result)
     print(json.dumps({"ok": True, "briefing": briefing_id, "result_id": result_id, "review_sha256": hashlib.sha256(review).hexdigest(), "result_sha256": hashlib.sha256(result).hexdigest(), "output_dir": str(root)}, indent=2))
 
 
 def fetch_bytes_request(url, headers):
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=45) as response: return response.read()
-    except urllib.error.HTTPError as exc: fail(f"Relay Result pull refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+    except urllib.error.HTTPError as exc: fail(f"Relay Result pull refused ({exc.code})")
     except OSError as exc: fail(f"Relay Result pull failed: {exc}")
 
 
@@ -248,7 +368,7 @@ def submit(args):
         with urllib.request.urlopen(request, timeout=45) as response:
             response_data = json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        fail(f"Relay Result submit refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+        fail(f"Relay Result submit refused ({exc.code})")
     except OSError as exc:
         fail(f"Relay Result submit failed: {exc}")
     if not response_data.get("resultId"):
@@ -382,6 +502,9 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser("package"); p.add_argument("--briefing", required=True); p.add_argument("--output-dir", required=True); p.set_defaults(fn=package)
     pub = commands.add_parser("publish"); pub.add_argument("--package", required=True); pub.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); pub.add_argument("--state-dir"); pub.add_argument("--dry-run", action="store_true"); pub.set_defaults(fn=publish)
+    create_p = commands.add_parser("create-room"); create_p.add_argument("--briefing", required=True); create_p.add_argument("--endpoint"); create_p.add_argument("--state-dir"); create_p.set_defaults(fn=create_room)
+    disable_p = commands.add_parser("disable-room"); disable_p.add_argument("--briefing", required=True); disable_p.add_argument("--room-ref", required=True); disable_p.add_argument("--state-dir"); disable_p.set_defaults(fn=disable_room)
+    revoke_p = commands.add_parser("revoke-room-session"); revoke_p.add_argument("--briefing", required=True); revoke_p.add_argument("--room-ref", required=True); revoke_p.add_argument("--session-id", required=True); revoke_p.add_argument("--state-dir"); revoke_p.set_defaults(fn=revoke_room_session)
     owner_p = commands.add_parser("results"); owner_p.add_argument("--briefing", required=True); owner_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); owner_p.add_argument("--state-dir"); owner_p.set_defaults(fn=owner_results)
     pull_p = commands.add_parser("pull-result"); pull_p.add_argument("--briefing", required=True); pull_p.add_argument("--result-id", required=True); pull_p.add_argument("--output-dir", required=True); pull_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); pull_p.add_argument("--state-dir"); pull_p.set_defaults(fn=pull_result)
     submit_p = commands.add_parser("submit"); submit_p.add_argument("--briefing", required=True); submit_p.add_argument("--review", required=True); submit_p.add_argument("--result", required=True); submit_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); submit_p.add_argument("--state-dir"); submit_p.add_argument("--dry-run", action="store_true"); submit_p.set_defaults(fn=submit)

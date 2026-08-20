@@ -163,18 +163,25 @@ The public-review runtime stores only operational state under `$HERMES_HOME/subs
 
 If the proxy/tunnel dies, the public URL is no longer a valid review surface. The agent must check status, close stale state, create a new session, re-verify, and publish a new URL. It must not claim a memory-resident Human Review session persists after the server has discarded it.
 
-## 7. Optional relay boundary
+## 7. Relay-hosted Room boundary
 
-[Subspace Relay](https://github.com/spacedock-dev/subspace-relay) is a potential future **transport adapter**, not a replacement for the above authority model. It can carry an immutable Briefing package and feedback Results between machines or staging environments. It does not understand review semantics and does not produce a binding Resolution.
+[Subspace Relay](https://github.com/spacedock-dev/subspace-relay) is the hosted
+transport/application layer for a bounded browser Review Room. This plugin is the
+**Hermes owner client**: it verifies and publishes immutable package bytes, keeps the
+owner-device receipt private, creates/disables a Room, revokes an arrived session, and
+lists/pulls feedback evidence. It does not host a browser, mint browser sessions, issue
+credentials to a reviewer, or produce a binding Resolution.
 
 ```mermaid
 flowchart LR
-    A[Plugin creates verified Briefing package] --> R[Optional Subspace Relay]
-    R --> V[Remote Subspace reviewer / staging environment]
-    V --> X[Review v1 Result]
+    A[Plugin verifies immutable Briefing package] --> P[Owner-authenticated publish]
+    P --> R[Relay-hosted Room]
+    R --> C[Human explicitly delivers Room URL capability]
+    C --> V[Relay browser reviewer session]
+    V --> X[Feedback-only Review v1 Result]
     X --> R
-    R --> O[Owner pulls exact Result bytes]
-    O --> E[Annotation evidence]
+    R --> O[Hermes owner lists/pulls exact Result bytes]
+    O --> E[Advisory Annotation evidence]
     E --> G[Existing Briefing-aware gate path]
     G --> L[Controller leg only, if binding routing is authorized]
 
@@ -182,4 +189,8 @@ flowchart LR
     style G fill:#312e81,stroke:#a78bfa,color:#fff
 ```
 
-Relay can improve durable package sharing, immutable transport, owner-only Result retrieval, capability URLs, and staging/prod separation. It must remain optional because local review must continue to work when relay or network access is unavailable. It also cannot replace Human Review’s browser-centric design-preview surface unless an adapter explicitly maps the same verified artifact into both viewers.
+The **Room URL capability** is deliberately outside the tool output and automatic agent
+delivery paths. Relay results remain advisory evidence: the plugin validates bytes and
+reports them, but never maps them to a verdict. Local Human Review remains an optional
+separate surface when Relay/network access is not appropriate; it is not a fallback Relay
+host.

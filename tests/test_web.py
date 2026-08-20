@@ -99,6 +99,12 @@ class RelayWebTests(unittest.TestCase):
         self.assertIn("args.shared_feedback", source)
         self.assertIn("--shared-feedback", source)
         self.assertIn("owner_results", source)
+        self.assertIn("get('operator_summaries',[])", source)
+
+    def test_readme_distinguishes_local_relay_web_from_hosted_room(self):
+        text = (ROOT / "README.md").read_text()
+        self.assertIn("Legacy local Relay Web viewer", text)
+        self.assertIn("not a Relay Room host", text)
 
 
 if __name__ == "__main__":

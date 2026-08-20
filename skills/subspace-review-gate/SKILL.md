@@ -1,47 +1,74 @@
 ---
 name: subspace-review-gate
-description: Review fixed artifacts through Subspace v1 and Human Review.
+description: Review Subspace artifacts and hand off decisions safely.
+version: 0.2.0
+author: Kent, Hermes Agent
 license: MIT
-compatibility: Requires the subspace-review-gate Hermes plugin and a local Human Review server for interactive review.
+compatibility: Requires the subspace-review-gate plugin; Human Review is optional.
+platforms: [linux, macos, windows]
 metadata:
-  author: Kent
-  contract: Subspace Review & Gate v1
+  hermes:
+    tags: [review, decision, handoff, subspace, relay, slack]
+    related_skills: []
 ---
 
 # Subspace Review & Gate
 
-Use this skill whenever a user needs review of a fixed artifact: a README, document, design preview, proposal, specification, or implementation plan. The portable Subspace v1 Briefing is the only contract that crosses workflow, Slack, and reviewer surfaces. Human Review is a projection surface; Slack is a compact decision UI. Neither directly mutates a workflow.
+Use this skill to move a fixed artifact through review without losing which version was read, what feedback was given, or which option was selected. It uses the portable Subspace Review & Gate v1 contract. It does not give a reviewer, Relay, Slack, or this plugin authority to write a workflow verdict.
+
+## When to Use
+
+Use this skill when:
+
+- a README, document, design preview, proposal, specification, or implementation plan is ready for review;
+- a discussion has become a short fixed decision note that people or agents can read;
+- several people or agents need asynchronous feedback on the same revision;
+- a decision needs explicit routes, rationale, and a durable handoff between Hermes, Slack, a browser reviewer, or Relay;
+- the next collaborator must know exactly which artifact bytes were reviewed.
+
+Do not use this skill for ordinary open-ended conversation. Answer or discuss normally when there is no fixed artifact or decision opportunity. If durable review or handoff becomes necessary, first write the short proposal, decision note, design, or plan that people can actually review.
+
+## Prerequisites
+
+- Confirm the `subspace_review_gate` toolset is available before creating a Briefing.
+- Finish and render or otherwise verify the artifact before opening review.
+- Use a temporary public Human Review surface only for non-sensitive artifacts and only after its runtime prerequisites are available.
+- Use Relay Room owner operations only with the profile-local private owner receipt. A Room URL is a capability and is never automatically posted or delivered.
 
 ## Procedure
 
-1. Create the complete artifact and render or otherwise verify it before review. Do not open a review on a draft that has not been checked.
-2. Use `subspace_review_gate_create` to write an immutable v1 Briefing. Include the exact artifact, its raw-byte SHA-256 revision, one question, and ordered routes. A Spacedock entity may supply routing context but is not required.
-3. Use `subspace_review_gate_verify` immediately before publishing. A digest mismatch requires a new Briefing; never overwrite the old revision.
-4. Open the artifact in Human Review. For a public temporary reviewer URL, use `subspace_review_gate_open_public_review`; it requires Node, the patched Human Review fork, and `cloudflared`, and it verifies the exact public session before returning it. Confirm a submitted feedback batch reaches `human-review poll` before claiming external review works.
-5. Use `subspace_review_gate_render_slack` and post the result as the Slack companion UI. Preserve route order and the reply-by-number instruction. Include the Human Review URL without wrapping punctuation or formatting it so Slack absorbs trailing characters.
-6. Treat Human Review comments as annotations/evidence. Treat Slack replies as candidate resolutions. Use `subspace_review_gate_build_resolution` to validate a specific route; `revise` and `hold` require a rationale.
-7. Only a workflow controller or dispatched leg may apply a binding Resolution to a Spacedock workflow. For an artifact without a workflow, save the portable Resolution alongside the Briefing and report the outcome; do not invent a workflow transition.
+1. **Fix the review unit.** Create one complete artifact with one review question. Completion criterion: the artifact path, media type, question, and intended reviewer are known.
+2. **Create and verify the Briefing.** Use `subspace_review_gate_create`, then `subspace_review_gate_verify`. Completion criterion: the artifact bytes match the Briefing's SHA-256 revision. New bytes, question, or routes require a new Briefing.
+3. **Choose the review surface.**
+   - For a normal fixed-artifact review, use the appropriate local or Human Review surface and `subspace_review_gate_render_slack`.
+   - For a Relay-hosted browser review, use `subspace_review_gate_relay_package`, `subspace_review_gate_relay_publish`, then the owner-client tools to create a Room, list results, and pull a Result. Do not host the browser yourself or expose the Room capability automatically.
+   Completion criterion: every reviewer sees the same fixed Briefing revision.
+4. **Collect feedback as evidence.** Treat reviewer comments as portable `Annotation` evidence. Treat a Relay feedback Result as feedback only. Completion criterion: evidence is tied to the Briefing and does not alter artifact bytes.
+5. **Handle discussion and decisions separately.** `[Q]` means answer or discuss only. `[RES]` requires an explicit entity-specific choice or imperative. Default to `[Q]` when the signal is absent or ambiguous. For an explicit route selection, use `subspace_review_gate_build_resolution`; `revise` and `hold` require a reason or included Annotation. Completion criterion: the chosen route ID and destination are unambiguous.
+6. **Hand off workflow changes.** Only a workflow controller or dispatched leg may apply a binding Resolution to a workflow. For an artifact without a workflow, preserve the portable outcome beside the Briefing. Completion criterion: any state change has separate controller evidence.
 
-## Slack UI
+## Slack projection
 
-- Always state the Briefing ID, question, fixed revision, ordered choices, and `Reply with the option number`.
-- Use a plain link for Human Review. Do not include trailing `*`, `)`, or punctuation in the hyperlink destination.
-- Use native Slack option controls only for an explicit decision opportunity. Their selected value must map to exactly one route ID; free-form discussion remains advisory.
-- `[Q]` means answer/discuss only. `[RES]` requires an explicit entity-specific choice or imperative. Default to `[Q]`.
+- Render Slack from the same Briefing, not from a paraphrase.
+- Include Briefing ID, question, fixed revision, ordered routes, and `Reply with the option number`.
+- A free-form reply, question, comment, or emoji is advisory. A native Slack option control is valid only when it maps to one exact route ID.
+- Preserve the exact route ID and destination. `approve` by itself is not enough routing information.
 
-## Safety
+## Pitfalls
 
-- A Briefing is immutable. New artifact bytes, question, or routes require a new ID.
-- Do not treat `approve` as sufficient routing information: preserve the selected route ID and destination.
-- Do not expose a Human Review server through an unauthenticated public URL for sensitive artifacts. Prefer Tailnet during development; use an authenticated named tunnel for durable access.
-- Never let Slack or Human Review directly write a Spacedock verdict.
+- Do not open a review on unfinished or unverified bytes.
+- Do not treat a Room URL, share URL, owner receipt, device secret, session value, or Result envelope as ordinary message content.
+- Do not turn a self-declared reviewer name into verified identity or workflow authority.
+- Do not let Slack, Human Review, Relay, or a browser viewer directly write a workflow verdict.
+- Do not claim a public review works because a page returned HTTP 200; require actual submitted feedback evidence.
 
 ## Verification
 
-A review is complete only when all are true:
+A review or handoff is complete only when all applicable checks pass:
 
-- Briefing verification passes.
-- Human Review can submit a feedback batch to the waiting poll.
-- Slack shows the same ordered routes as the Briefing.
-- Any resolution validates to one route and includes rationale when required.
-- A workflow mutation, if any, is reported separately with controller evidence.
+- Briefing verification succeeds against the reviewed artifact bytes.
+- The reviewer surface received or submitted feedback as intended.
+- Slack shows the same routes and ordering as the Briefing.
+- A Resolution, if present, maps to exactly one route and has required rationale.
+- Relay owner operations retain capability material in profile-local private state.
+- A workflow mutation, if any, is separately reported with workflow-controller evidence.

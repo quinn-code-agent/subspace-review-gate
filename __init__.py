@@ -114,6 +114,32 @@ def relay_results(args, **_):
     return relay_call(*command)
 
 
+def relay_pull_result(args, **_):
+    command = ["pull-result", "--briefing", args["briefing"], "--result-id", args["result_id"], "--output-dir", args["output_dir"]]
+    if args.get("endpoint"): command.extend(["--endpoint", args["endpoint"]])
+    if args.get("state_dir"): command.extend(["--state-dir", args["state_dir"]])
+    return relay_call(*command)
+
+
+def relay_create_room(args, **_):
+    command = ["create-room", "--briefing", args["briefing"]]
+    if args.get("endpoint"): command.extend(["--endpoint", args["endpoint"]])
+    if args.get("state_dir"): command.extend(["--state-dir", args["state_dir"]])
+    return relay_call(*command)
+
+
+def relay_disable_room(args, **_):
+    command = ["disable-room", "--briefing", args["briefing"], "--room-ref", args["room_ref"]]
+    if args.get("state_dir"): command.extend(["--state-dir", args["state_dir"]])
+    return relay_call(*command)
+
+
+def relay_revoke_room_session(args, **_):
+    command = ["revoke-room-session", "--briefing", args["briefing"], "--room-ref", args["room_ref"], "--session-id", args["session_id"]]
+    if args.get("state_dir"): command.extend(["--state-dir", args["state_dir"]])
+    return relay_call(*command)
+
+
 def schema(name, description, properties, required):
     return {"name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": required}}
 
@@ -146,3 +172,12 @@ def register(ctx):
         schema=schema("subspace_review_gate_relay_annotations", "Convert Human Review comments to portable Subspace Annotation JSONL; no Resolution is emitted.", {**common, "feedback": {"type": "string"}, "output": {"type": "string"}, "reviewer": {"type": "string"}}, ["briefing", "feedback", "output"]), handler=relay_annotations)
     ctx.register_tool(name="subspace_review_gate_relay_results", toolset="subspace_review_gate", emoji="📨", check_fn=available,
         schema=schema("subspace_review_gate_relay_results", "Owner-only pull of Relay Result summaries. Results remain feedback-only evidence and do not route a workflow.", {**common, **relay_endpoint, "state_dir": {"type": "string"}}, ["briefing"]), handler=relay_results)
+    ctx.register_tool(name="subspace_review_gate_relay_pull_result", toolset="subspace_review_gate", emoji="📥", check_fn=available,
+        schema=schema("subspace_review_gate_relay_pull_result", "Owner-only pull of one feedback-only Relay Result: validates its Briefing and mode, then reports SHA-256 digests. This does not create a Resolution or change workflow state.", {**common, "result_id": {"type": "string"}, "output_dir": {"type": "string"}, **relay_endpoint, "state_dir": {"type": "string", "description": "Optional private owner-receipt directory."}}, ["briefing", "result_id", "output_dir"]), handler=relay_pull_result)
+    room_props = {**common, **relay_endpoint, "state_dir": {"type": "string", "description": "Optional private owner-receipt directory."}}
+    ctx.register_tool(name="subspace_review_gate_relay_create_room", toolset="subspace_review_gate", emoji="🏠", check_fn=available,
+        schema=schema("subspace_review_gate_relay_create_room", "Create a Relay Review Room for an already-published Briefing using its private owner receipt. This does not create an invitation or a Resolution.", room_props, ["briefing"]), handler=relay_create_room)
+    ctx.register_tool(name="subspace_review_gate_relay_disable_room", toolset="subspace_review_gate", emoji="🛑", check_fn=available,
+        schema=schema("subspace_review_gate_relay_disable_room", "Disable a Relay Review Room using its private non-network room reference and owner receipt. This does not expose the Room capability or write a workflow verdict.", {**common, "room_ref": {"type": "string"}, "state_dir": {"type": "string", "description": "Optional private owner-receipt directory."}}, ["briefing", "room_ref"]), handler=relay_disable_room)
+    ctx.register_tool(name="subspace_review_gate_relay_revoke_room_session", toolset="subspace_review_gate", emoji="🚫", check_fn=available,
+        schema=schema("subspace_review_gate_relay_revoke_room_session", "Revoke one arrived reviewer session using a private non-network Room reference and owner receipt. This does not expose a Room capability or write workflow state.", {**common, "room_ref": {"type": "string"}, "session_id": {"type": "string"}, "state_dir": {"type": "string", "description": "Optional private owner-receipt directory."}}, ["briefing", "room_ref", "session_id"]), handler=relay_revoke_room_session)

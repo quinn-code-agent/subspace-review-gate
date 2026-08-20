@@ -1,79 +1,84 @@
-# Setup guide for Hermes agents
+# Setup and self-use guide for Hermes agents
 
-This guide lets a new Hermes host reproduce the current Subspace Review & Gate flow for a fixed artifact: an immutable Subspace v1 Briefing, a review viewer, a Slack gate projection, and a portable Resolution. It does not grant workflow-controller authority.
+This guide is for a Hermes host that installs and operates `subspace-review-gate`. It covers local fixed-artifact review, optional temporary Human Review, and Relay-hosted Review Room ownership. It does not grant workflow controller authority.
 
-Read [`architecture.md`](architecture.md) first for the responsibility boundaries. The governing review transport contract is [Subspace Review & Gate v1](https://github.com/spacedock-dev/subspace-v0/blob/5e4a5f5cb7ce9521a3cc451aa9ec30ea4e6f1ddb/docs/review-and-gate.md).
+Read [the README](../README.md) first for a product overview. Read [architecture.md](architecture.md) before changing authority, transport, or browser boundaries. The portable object contract is [Subspace Review & Gate v1](https://github.com/spacedock-dev/subspace-v0/blob/5e4a5f5cb7ce9521a3cc451aa9ec30ea4e6f1ddb/docs/review-and-gate.md).
 
-## 1. What this installs
+## 1. What this host receives
 
 ```text
-artifact → Briefing + SHA-256 → Human Review feedback → Slack route selection
-         → validated Annotation + Resolution → controller leg, if a workflow exists
+Hermes plugin
+→ Subspace v1 Briefing and verification tools
+→ Slack review/gate projection
+→ optional Human Review runtime controls
+→ optional Relay owner-client controls
 ```
 
-The plugin supplies the Briefing/digest/Resolution tools and an optional public Human Review runtime. It does **not** make Slack or the reviewer viewer a workflow writer.
+The plugin can prepare review evidence and owner-side Relay operations. It does not make a browser reviewer, Slack, Relay, or the plugin itself a workflow writer.
 
-## 2. Required capabilities
+## 2. Prerequisites
 
-### Required for every host
+### Every host
 
-| Need | Why | Check |
-|---|---|---|
-| Hermes Agent | plugin host and tool registry | `hermes --version` |
-| Python 3 | plugin CLI and tests | `python3 --version` |
-| GitHub read access | install/update the plugin repository | `gh auth status` or public HTTPS access |
-| Local artifact access | raw bytes are hashed and reviewed locally | `test -r ./artifact.md` |
+| Need | Check |
+|---|---|
+| Hermes Agent | `hermes --version` |
+| Python 3 | `python3 --version` |
+| Local artifact access | `test -r ./artifact.md` |
+| GitHub access to install/update the plugin | `gh auth status` or public HTTPS access |
 
-### Required for the temporary public review viewer
+### Temporary public Human Review
 
-| Need | Why | Check |
-|---|---|---|
-| Node.js 20+ and npm | Human Review viewer | `node --version`, `npm --version` |
-| `cloudflared` | temporary HTTPS Quick Tunnel | `cloudflared --version` |
-| `curl` | public-session verification | `curl --version` |
-| npm global-install permission, or preinstalled `human-review` | installs the remote-origin-safe Human Review fork | `command -v human-review` |
-| Outbound HTTPS / QUIC to Cloudflare | creates and serves the Quick Tunnel | run `subspace-review-runtime doctor` |
+Use this only for a non-sensitive artifact and a deliberately temporary review URL.
 
-No Cloudflare account, own DNS, Tailscale, or API key is needed for a temporary Quick Tunnel. A Quick Tunnel is public and unauthenticated: anyone who receives its capability URL can read the artifact and submit feedback.
+| Need | Check |
+|---|---|
+| Node.js 20+ and npm | `node --version`, `npm --version` |
+| `cloudflared` | `cloudflared --version` |
+| `curl` | `curl --version` |
+| npm global install permission or existing `human-review` | `command -v human-review` |
 
-### Required for durable or sensitive sharing
+A Quick Tunnel is public and unauthenticated. Anyone holding its URL can read the artifact and submit feedback. Use a named Cloudflare Tunnel plus Cloudflare Access for durable or sensitive sharing; keep those credentials outside this plugin.
 
-Use a named Cloudflare Tunnel plus Cloudflare Access instead of a Quick Tunnel. That requires a Cloudflare account, a controlled hostname/DNS zone, Access policy, and credentials managed outside this plugin. Do not put those credentials in a Briefing, repository, or Slack message.
+### Relay owner client
 
-## 3. Install the plugin
+The plugin creates and retains a private owner receipt only after package publish. It stores owner receipts and Room records below:
+
+```text
+$HERMES_HOME/subspace-review-gate/relay/
+```
+
+These files contain credentials or capability material and must remain private. Do not copy them into a Briefing, Git, Slack, or a reviewer browser.
+
+## 3. Install and confirm the plugin
 
 ```bash
 hermes plugins install quinn-code-agent/subspace-review-gate
 hermes plugins enable subspace-review-gate
-```
-
-Start a new Hermes session after enabling it. Confirm the plugin is enabled:
-
-```bash
 hermes plugins list
 ```
 
-The installed plugin also supplies the `subspace-review-gate` skill. In an agent session, load that skill before opening an artifact review.
+Start a new Hermes session after enabling the plugin. It provides the `subspace_review_gate` toolset and the agent instruction file at:
 
-## 4. Prepare the optional Human Review runtime
-
-Run a machine-readable prerequisite check:
-
-```bash
-subspace-review-runtime doctor
+```text
+skills/subspace-review-gate/SKILL.md
 ```
 
-If `human-review` is missing, install the patched fork:
+An installed agent should load that skill when it needs a durable review or decision handoff for a fixed artifact. The skill also says when ordinary discussion should remain ordinary discussion.
 
-```bash
-subspace-review-runtime install-runtime
-```
+## 4. Choose how this Hermes host will use the plugin
 
-The fork is [`quinn-code-agent/human-review`](https://github.com/quinn-code-agent/human-review). It is required for remote review because the stock viewer can point the artifact iframe at the reviewer's own loopback address. The fork preserves a reachable proxied/public origin while retaining loopback isolation for a local session.
+### Fixed-artifact review
 
-## 5. First smoke test
+Use this for a document, proposal, design preview, specification, or plan that is ready to be read by others.
 
-Use a non-sensitive Markdown file for the first external test.
+1. Finish and render or otherwise verify the artifact.
+2. Create a Briefing with one question, fixed SHA-256 artifact revision, and ordered routes.
+3. Verify the Briefing immediately before sharing it.
+4. Open a reviewer surface and render the matching Slack projection.
+5. Treat feedback as evidence and an explicit route selection as a candidate Resolution.
+
+For a local smoke test:
 
 ```bash
 mkdir -p .review
@@ -81,78 +86,98 @@ printf '# Review smoke test\n\nThis is a fixed artifact.\n' > .review/smoke.md
 
 subspace-review-gate create \
   --artifact .review/smoke.md \
-  --question 'Is the review transport working?' \
+  --question 'Is this review clear?' \
   --briefing .review/smoke-briefing.json \
-  --route 'approve|Transport verified|review:verified' \
-  --route 'revise|Describe the observed problem|review:revise'
+  --route 'approve|Ready|review:ready' \
+  --route 'revise|Describe what to change|review:revise'
 
 subspace-review-gate verify --briefing .review/smoke-briefing.json
+```
+
+For a Spacedock-backed workflow, only the authorized controller or dispatched leg can apply a validated Resolution. For an independent artifact, keep the portable outcome beside the Briefing without inventing a workflow state change.
+
+### Temporary Human Review
+
+First check and, if needed, install the patched runtime:
+
+```bash
+subspace-review-runtime doctor
+subspace-review-runtime install-runtime
+```
+
+Then open a non-sensitive artifact:
+
+```bash
 subspace-review-runtime open --artifact .review/smoke.md
 ```
 
-`open` only prints a URL after it verifies that the public URL returns the exact expected Human Review session. It stores process state at:
+The command prints a URL only after it verifies the public session shell. Run `human-review poll <artifact> --timeout …` while the review is open. A review surface is proven only when a feedback batch arrives, not when an HTTP request returns 200.
 
-```text
-$HERMES_HOME/subspace-review-gate/public-review.json
-```
-
-If Cloudflare allocates a Quick Tunnel hostname that cannot be resolved yet, the runtime does not return it. It stops that tunnel and retries; a final refusal is safer than a broken link.
-
-In a separate terminal, receive feedback:
-
-```bash
-human-review poll .review/smoke.md --timeout 1800
-```
-
-Open the returned URL from another network/browser, add a short note, and click **Send**. The smoke test passes only if `poll` receives a feedback batch. HTTP 200 alone does not prove the reviewer can view and submit.
-
-Close the public surface when done:
+Close the temporary public surface when finished:
 
 ```bash
 subspace-review-runtime close
 ```
 
-## 6. Run an actual artifact review
+### Relay-hosted Review Room owner client
 
-1. Finish and locally verify the artifact before sharing it.
-2. Create a new Briefing with one decision question and ordered routes.
-3. Verify its raw-byte SHA-256 immediately before publishing.
-4. Open Human Review with `subspace_review_gate_open_public_review` or `subspace-review-runtime open`.
-5. Render the matching Slack surface with `subspace_review_gate_render_slack` or the CLI.
-6. Post Briefing ID, question, fixed revision, review URL, routes in order, and **Reply with the option number**.
-7. Treat Human Review edits/comments as advisory evidence. Treat Slack replies as candidate Resolutions.
-8. Run `subspace_review_gate_build_resolution` against the immutable Briefing. It refuses ambiguous choice text and requires rationale for `revise` and `hold`.
-9. Only an authorized workflow controller or dispatched leg may apply a binding Resolution to a Spacedock entity.
+Use this when Relay should host the browser review surface for an immutable Briefing. The Hermes plugin remains the owner client.
 
-For an artifact with no workflow, persist the validated Annotation/Resolution next to its Briefing and report the outcome; do not fabricate a status transition.
+```text
+verify Briefing
+→ subspace_review_gate_relay_package
+→ subspace_review_gate_relay_publish
+→ private owner receipt
+→ subspace_review_gate_relay_create_room
+→ human deliberately delivers Room URL capability
+→ Relay browser reviewer submits feedback-only Result
+→ subspace_review_gate_relay_results
+→ subspace_review_gate_relay_pull_result
+```
 
-## 7. Update and verify the installation
+The Room URL is a capability. The plugin does not print, post, fan out, or automatically deliver it. A Room is controlled through a private local `room_ref`:
+
+- `subspace_review_gate_relay_create_room` creates a Room and returns a non-network `room_ref`.
+- `subspace_review_gate_relay_results` returns safe owner-visible Result summaries.
+- `subspace_review_gate_relay_pull_result` writes a verified feedback-mode Result locally and reports its digests.
+- `subspace_review_gate_relay_disable_room` disables the Room.
+- `subspace_review_gate_relay_revoke_room_session` revokes an arrived reviewer session without disabling sibling sessions, but requires an already supplied session ID.
+
+Session IDs are not discoverable by this plugin. Do not guess, derive, log, or request them through a reviewer browser. Use the revoke control only when an owner already has a session ID through an approved Relay owner channel.
+
+The browser receives no owner device secret, owner receipt, or workflow authority. Relay feedback remains evidence; it does not become a Resolution or workflow verdict automatically.
+
+## 5. Agent self-use
+
+The runtime guidance for an installed agent is [skills/subspace-review-gate/SKILL.md](../skills/subspace-review-gate/SKILL.md).
+
+Use the system when a discussion has become a fixed artifact that needs review, asynchronous feedback, an explicit choice, or durable handoff. Do not open a Briefing for ordinary open-ended conversation. First write the short proposal, decision note, design, or plan that people can actually review.
+
+## 6. Update and verify
 
 ```bash
 hermes plugins update subspace-review-gate
 python3 -m unittest discover -v "$HERMES_HOME/plugins/subspace-review-gate/tests"
 ```
 
-If `$HERMES_HOME` is not set, Hermes normally uses `~/.hermes`. Do not hardcode that path in automation: profiles can set a different `HERMES_HOME`.
+If `$HERMES_HOME` is not set, Hermes normally uses `~/.hermes`. Do not hardcode that location in automation because profiles can set a different `HERMES_HOME`.
 
-## 8. Troubleshooting
+## 7. Troubleshooting
 
 | Symptom | Meaning / action |
 |---|---|
-| `doctor` reports missing commands | Install the named missing dependency; do not bypass it with a URL copied from another host. |
-| `open` refuses after tunnel attempts | Cloudflare did not provide a publicly resolvable and verified Quick Tunnel. No usable URL was produced. Retry later or use named Tunnel + Access. |
-| Quick Tunnel gives HTTP 502 | The local proxy or Human Review server stopped. Run `subspace-review-runtime status`; close stale state and reopen. |
-| Viewer says session ended | A Human Review session is memory-resident. Reopen a new review URL; do not reuse an old session URL. |
-| Viewer shows blank / loopback error remotely | Confirm the patched `quinn-code-agent/human-review` fork is installed, not stock Human Review. |
-| `poll` times out | No feedback batch was sent. It is not evidence that the viewer works or fails; keep polling or ask the reviewer to click Send. |
-| Slack link includes a trailing `*` or `)` | Post the URL as a plain link without wrapping punctuation/formatting. |
-| Slack says `approve` but route is unclear | Do not infer. Rebuild the Resolution from the explicit route number or ID. |
+| `doctor` reports missing commands | Install the named dependency. Do not copy a URL or runtime state from another host. |
+| public `open` refuses | Cloudflare did not provide a verifiable public Tunnel. No usable URL was created. Retry later or use named Tunnel + Access. |
+| Quick Tunnel returns 502 | The local proxy or Human Review server stopped. Run `subspace-review-runtime status`, close stale state, and open a new session. |
+| `poll` times out | No feedback batch arrived. It does not prove the browser path works. |
+| Slack route is ambiguous | Rebuild the Resolution from an explicit route number or route ID. |
+| Relay owner action refuses | Check the requested Briefing has its private owner receipt and that the operation is using the intended profile-local `$HERMES_HOME`. |
 
-## 9. Security checklist
+## 8. Safety checklist
 
-- [ ] Artifact is safe for a public unauthenticated capability URL, or a protected named tunnel is in use.
-- [ ] Briefing SHA-256 verifies after artifact rendering/generation.
-- [ ] Quick Tunnel is closed after review.
-- [ ] Secrets, access tokens, device credentials, and server records are excluded from artifact, Briefing, Git, and Slack.
-- [ ] Human Review feedback is not treated as a workflow verdict.
-- [ ] Slack resolution is validated against the exact Briefing route before any workflow leg receives it.
+- [ ] The artifact is appropriate for the chosen review surface.
+- [ ] The Briefing SHA-256 verifies after the artifact was finalized.
+- [ ] Temporary public review URLs are closed when no longer needed.
+- [ ] Owner receipts, secrets, Room IDs, session values, and capability URLs stay out of Git, Slack, and reviewer output.
+- [ ] Feedback is not treated as a workflow verdict.
+- [ ] Any workflow change is separately made and evidenced by its authorized controller.
