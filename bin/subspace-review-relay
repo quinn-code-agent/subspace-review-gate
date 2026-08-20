@@ -233,8 +233,8 @@ def owner_post(endpoint, path, receipt, body=None):
         fail(f"Relay Room control refused ({exc.code})")
     except OSError as exc:
         fail(f"Relay Room control failed: {exc}")
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        fail(f"Relay Room control returned invalid JSON: {exc}")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("Relay Room control returned invalid JSON")
 
 
 def create_room(args):
@@ -304,7 +304,7 @@ def owner_results(args):
             if participant:
                 attribution += " · " + participant
             operator_summaries.append({"result_id": result_id, "claimed_name": claimed_name, "participant": participant, "attribution": attribution})
-    print(json.dumps({"ok": True, "briefing": briefing_id, "result_count": len(results) if isinstance(results, list) else 0, "operator_summaries": operator_summaries, "listStale": payload.get("listStale", False)}, indent=2))
+    print(json.dumps({"ok": True, "briefing": briefing_id, "result_count": len(results) if isinstance(results, list) else 0, "operator_summaries": operator_summaries, "listStale": payload.get("listStale") is True}, indent=2))
 
 
 def pull_result(args):
