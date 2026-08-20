@@ -220,7 +220,7 @@ def owner_post(endpoint, path, receipt, body=None):
         with urllib.request.urlopen(request, timeout=45) as response:
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        fail(f"Relay Room control refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+        fail(f"Relay Room control refused ({exc.code})")
     except OSError as exc:
         fail(f"Relay Room control failed: {exc}")
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -288,8 +288,10 @@ def owner_results(args):
             result_id = result.get("resultId")
             if not isinstance(result_id, str) or not re.fullmatch(r"res_[a-z2-7]{26}", result_id):
                 result_id = None
-            claimed_name = result.get("actor") if isinstance(result.get("actor"), str) else None
-            participant = result.get("participant") if isinstance(result.get("participant"), str) else None
+            raw_actor = result.get("actor")
+            raw_participant = result.get("participant")
+            claimed_name = raw_actor if isinstance(raw_actor, str) and re.fullmatch(r"person:[a-z0-9._@-]{1,128}", raw_actor) else None
+            participant = raw_participant if isinstance(raw_participant, str) and re.fullmatch(r"par_[a-z2-7]{26}", raw_participant) else None
             attribution = (claimed_name or "unknown claimed name") + " (self-declared)"
             if participant:
                 attribution += " · " + participant
