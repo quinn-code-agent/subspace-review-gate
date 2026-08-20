@@ -140,7 +140,9 @@ The Room URL is a capability. The plugin does not print, post, fan out, or autom
 - `subspace_review_gate_relay_results` returns safe owner-visible Result summaries.
 - `subspace_review_gate_relay_pull_result` writes a verified feedback-mode Result locally and reports its digests.
 - `subspace_review_gate_relay_disable_room` disables the Room.
-- `subspace_review_gate_relay_revoke_room_session` revokes an arrived reviewer session without disabling sibling sessions.
+- `subspace_review_gate_relay_revoke_room_session` revokes an arrived reviewer session without disabling sibling sessions, but requires an already supplied session ID.
+
+Session IDs are not discoverable by this plugin. Do not guess, derive, log, or request them through a reviewer browser. Use the revoke control only when an owner already has a session ID through an approved Relay owner channel.
 
 The browser receives no owner device secret, owner receipt, or workflow authority. Relay feedback remains evidence; it does not become a Resolution or workflow verdict automatically.
 

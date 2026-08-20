@@ -22,6 +22,7 @@ class SubspaceReviewGateSkillTests(unittest.TestCase):
             "version:",
             "author:",
             "license: MIT",
+            "compatibility:",
             "platforms: [linux, macos, windows]",
             "metadata:",
             "  hermes:",
@@ -33,6 +34,7 @@ class SubspaceReviewGateSkillTests(unittest.TestCase):
         if description is None:
             self.fail("frontmatter must include description")
         self.assertLessEqual(len(description.group(1)), 60)
+        self.assertIn("Subspace", description.group(1))
         self.assertTrue(description.group(1).endswith("."))
 
     def test_trigger_includes_durable_handoff_and_ordinary_discussion_counter_trigger(self):

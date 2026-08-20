@@ -27,7 +27,9 @@ class DocumentationTests(unittest.TestCase):
             "### Relay-hosted Review Room owner client",
             "subspace_review_gate_relay_create_room",
             "subspace_review_gate_relay_pull_result",
-            "Room URL is a capability",
+            "subspace_review_gate_relay_disable_room",
+            "subspace_review_gate_relay_revoke_room_session",
+            "Session IDs are not discoverable by this plugin",
             "skills/subspace-review-gate/SKILL.md",
         ):
             self.assertIn(required, text)
@@ -82,6 +84,8 @@ class DocumentationTests(unittest.TestCase):
             "## Where to read next",
             "### Review a fixed artifact",
             "### Run a Relay-hosted Review Room",
+            "subspace_review_gate_relay_disable_room",
+            "subspace_review_gate_relay_revoke_room_session",
             "docs/setup-for-hermes-agents.md",
             "docs/architecture.md",
             "skills/subspace-review-gate/SKILL.md",

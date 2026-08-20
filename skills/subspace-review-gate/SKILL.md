@@ -1,9 +1,10 @@
 ---
 name: subspace-review-gate
-description: Review fixed artifacts and hand off decisions safely.
+description: Review Subspace artifacts and hand off decisions safely.
 version: 0.2.0
 author: Kent, Hermes Agent
 license: MIT
+compatibility: Requires the subspace-review-gate plugin; Human Review is optional.
 platforms: [linux, macos, windows]
 metadata:
   hermes:
