@@ -86,6 +86,8 @@ class DocumentationTests(unittest.TestCase):
             "### Run a Relay-hosted Review Room",
             "subspace_review_gate_relay_disable_room",
             "subspace_review_gate_relay_revoke_room_session",
+            "subspace-review-gate build-resolution",
+            "Reply with the option number",
             "docs/setup-for-hermes-agents.md",
             "docs/architecture.md",
             "skills/subspace-review-gate/SKILL.md",

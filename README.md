@@ -93,7 +93,16 @@ subspace-review-gate render-slack \
   --human-review-url 'http://100.x.y.z:17891/s/s_example'
 ```
 
-Use `build-resolution` only for an explicit route choice. `revise` and `hold` need a reason or included feedback evidence.
+Use `build-resolution` only for an explicit route choice. `revise` and `hold` need a reason or included feedback evidence:
+
+```bash
+subspace-review-gate build-resolution \
+  --briefing ./.review/briefing-readme-r1.json \
+  --choice 2 \
+  --reason 'Add a concrete example before publication.'
+```
+
+A Slack review message must include the Briefing ID, question, fixed revision, reviewer link, ordered routes, and `Reply with the option number`. A comment, question, or emoji remains advisory.
 
 ## Where to read next
 
