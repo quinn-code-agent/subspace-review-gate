@@ -2,6 +2,26 @@
 
 A standalone Hermes plugin for reviewing fixed artifacts—documents, proposals, designs, specifications, and plans—through the portable [Subspace Review & Gate v1](https://github.com/spacedock-dev/subspace-v0/blob/5e4a5f5cb7ce9521a3cc451aa9ec30ea4e6f1ddb/docs/review-and-gate.md) contract.
 
+## What this plugin is
+
+This plugin brings the Subspace Review & Gate v1 contract into a Hermes session. It uses
+the same `Briefing`, `Annotation`, and feedback Result objects as other Subspace clients;
+it is not a new review format.
+
+Three names describe the same role:
+
+- **Hermes 的 Subspace Review & Gate v1 integration**: it lets Hermes create, verify,
+  package, and recover portable review objects.
+- **Hermes-native Subspace owner client**: it gives a Hermes owner the private Relay calls
+  needed to publish a package, operate a Review Room, and pull feedback.
+- **Hermes 的 portable-review adapter**: it carries one fixed review contract between
+  Hermes, Relay, browser viewers, Human Review, and Slack instead of translating it into a
+  different format for each surface.
+
+Relay stores and delivers the bytes. The browser viewer collects feedback. The plugin
+handles the owner side. None of these pieces decides whether work is approved or writes a
+workflow status: the plugin does not turn feedback into a workflow verdict.
+
 It makes one contract visible in two complementary review surfaces:
 
 - **Human Review** renders the artifact and receives anchored comments, direct edits, and overall feedback.

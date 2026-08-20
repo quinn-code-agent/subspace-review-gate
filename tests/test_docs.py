@@ -38,6 +38,17 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("does not host a browser", text)
         self.assertNotIn("potential future **transport adapter**", text)
 
+    def test_readme_explains_the_hermes_subspace_integration_in_plain_language(self):
+        text = (ROOT / "README.md").read_text()
+        for required in (
+            "Hermes 的 Subspace Review & Gate v1 integration",
+            "Hermes-native Subspace owner client",
+            "Hermes 的 portable-review adapter",
+            "not a new review format",
+            "does not turn feedback into a workflow verdict",
+        ):
+            self.assertIn(required, text)
+
     def test_readme_documents_relay_room_owner_client_boundary(self):
         text = (ROOT / "README.md").read_text()
         for required in (
