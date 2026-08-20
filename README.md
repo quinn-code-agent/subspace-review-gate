@@ -47,7 +47,7 @@ The plugin is the owner client. Relay owns the Room, browser session, cookie/CSR
 
 Owner controls are `subspace_review_gate_relay_create_room`, `subspace_review_gate_relay_results`, and `subspace_review_gate_relay_pull_result`. A private `room_ref` can disable a Room or revoke an arrived reviewer session without exposing the Room ID or URL.
 
-### Use the local Relay Web viewer
+### Legacy local Relay Web viewer
 
 `bin/subspace-relay-web` is an optional local development viewer for a published Briefing. It is not a Relay Room host and must not be used to distribute a Room or share capability. It binds to `127.0.0.1` by default.
 
