@@ -62,6 +62,19 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn(required, text)
         self.assertNotIn("Relay-backed Subspace Web viewer", text)
 
+    def test_readme_has_a_reader_path_for_product_operator_and_agent(self):
+        text = (ROOT / "README.md").read_text()
+        for required in (
+            "## Choose a path",
+            "## Where to read next",
+            "### Review a fixed artifact",
+            "### Run a Relay-hosted Review Room",
+            "docs/setup-for-hermes-agents.md",
+            "docs/architecture.md",
+            "skills/subspace-review-gate/SKILL.md",
+        ):
+            self.assertIn(required, text)
+
     def test_readme_links_both_new_documents(self):
         text = (ROOT / "README.md").read_text()
         self.assertIn("docs/setup-for-hermes-agents.md", text)

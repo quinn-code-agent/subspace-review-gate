@@ -1,47 +1,62 @@
 # Subspace Review & Gate for Hermes
 
-A standalone Hermes plugin for reviewing fixed artifacts—documents, proposals, designs, specifications, and plans—through the portable [Subspace Review & Gate v1](https://github.com/spacedock-dev/subspace-v0/blob/5e4a5f5cb7ce9521a3cc451aa9ec30ea4e6f1ddb/docs/review-and-gate.md) contract.
+`subspace-review-gate` lets a Hermes session use the portable [Subspace Review & Gate v1](https://github.com/spacedock-dev/subspace-v0/blob/5e4a5f5cb7ce9521a3cc451aa9ec30ea4e6f1ddb/docs/review-and-gate.md) contract for fixed documents, designs, proposals, specifications, and plans.
 
 ## What this plugin is
 
-This plugin brings the Subspace Review & Gate v1 contract into a Hermes session. It uses
-the same `Briefing`, `Annotation`, and feedback Result objects as other Subspace clients;
-it is not a new review format.
+This plugin brings the Subspace Review & Gate v1 contract into Hermes. It uses the same `Briefing`, `Annotation`, and feedback Result objects as other Subspace clients; it is not a new review format.
 
 Three names describe the same role:
 
-- **Hermes 的 Subspace Review & Gate v1 integration**: it lets Hermes create, verify,
-  package, and recover portable review objects.
-- **Hermes-native Subspace owner client**: it gives a Hermes owner the private Relay calls
-  needed to publish a package, operate a Review Room, and pull feedback.
-- **Hermes 的 portable-review adapter**: it carries one fixed review contract between
-  Hermes, Relay, browser viewers, Human Review, and Slack instead of translating it into a
-  different format for each surface.
+- **Hermes 的 Subspace Review & Gate v1 integration**: Hermes can create, verify, package, and recover portable review objects.
+- **Hermes-native Subspace owner client**: a Hermes owner can publish a package, operate a Relay Review Room, and pull feedback through private owner credentials.
+- **Hermes 的 portable-review adapter**: one fixed review contract can move between Hermes, Relay, browser viewers, Human Review, and Slack without changing format at each step.
 
-Relay stores and delivers the bytes. The browser viewer collects feedback. The plugin
-handles the owner side. None of these pieces decides whether work is approved or writes a
-workflow status: the plugin does not turn feedback into a workflow verdict.
+Relay stores and delivers bytes. A browser viewer collects feedback. The plugin handles the owner side. None of these pieces decides whether work is approved or writes a workflow status: the plugin does not turn feedback into a workflow verdict.
 
-It makes one contract visible in two complementary review surfaces:
+## Choose a path
 
-- **Human Review** renders the artifact and receives anchored comments, direct edits, and overall feedback.
-- **Slack** presents the same immutable Briefing, ordered routing choices, and a reply-by-number gate UI.
+### Review a fixed artifact
 
-This plugin does **not** execute workflows. For Spacedock-backed work, the First Officer or a dispatched leg remains the only writer of a verdict. For independent artifacts, the result is stored as portable Review & Gate entries beside the Briefing.
-
-## Contract-first flow
+Use this when people or agents need to read the same fixed version of a document, design, proposal, or plan.
 
 ```text
-fixed artifact bytes
-  → immutable Subspace v1 Briefing (artifact URI + sha256 + routes)
-  → verify raw-byte digest
-  → Human Review projection (comments / edits)
-  → Slack projection (ordered routes / reply-by-number)
-  → validated Annotation + Resolution
-  → workflow controller applies routing, if one exists
+artifact bytes
+→ Briefing with a SHA-256 revision and one question
+→ Human Review or another reviewer surface
+→ feedback annotations
+→ an explicit Slack route choice, when a decision is needed
 ```
 
-A Briefing is one decision opportunity. Change the artifact revision, question, or routes and create a new Briefing; never mutate the old one.
+Use the plugin's Briefing, verification, Slack-rendering, and Resolution-building tools. Human Review comments are evidence. Slack replies are candidate choices. A workflow controller decides whether a validated Resolution changes any workflow state.
+
+### Run a Relay-hosted Review Room
+
+Use this when a Hermes owner needs Relay to host the browser review surface for one immutable Briefing.
+
+```text
+verify and publish package
+→ private owner receipt
+→ create Room
+→ a human deliberately delivers the Room URL capability
+→ Relay browser session submits feedback-only Result
+→ owner lists and pulls the Result
+```
+
+The plugin is the owner client. Relay owns the Room, browser session, cookie/CSRF boundary, and immutable Result storage. The **Room URL is a capability**, not a status link. The plugin does not host a browser. It does not create a Resolution or automatically deliver a Room URL.
+
+Owner controls are `subspace_review_gate_relay_create_room`, `subspace_review_gate_relay_results`, and `subspace_review_gate_relay_pull_result`. A private `room_ref` can disable a Room or revoke an arrived reviewer session without exposing the Room ID or URL.
+
+### Use the local Relay Web viewer
+
+`bin/subspace-relay-web` is an optional local development viewer for a published Briefing. It is not a Relay Room host and must not be used to distribute a Room or share capability. It binds to `127.0.0.1` by default.
+
+## What this plugin does not do
+
+- It does not replace the Subspace v1 contract or create a second review schema.
+- It does not make self-declared reviewer attribution into verified identity or workflow authority.
+- It does not let Slack, Human Review, Relay, or a browser viewer write a workflow verdict.
+- It does not automatically expose owner credentials, owner receipts, browser session values, Result envelopes, or capability URLs.
 
 ## Install
 
@@ -50,13 +65,11 @@ hermes plugins install quinn-code-agent/subspace-review-gate
 hermes plugins enable subspace-review-gate
 ```
 
-Restart a new Hermes session after enabling it. The plugin registers the `subspace_review_gate` toolset and installs the `subspace-review-gate` skill.
-
-For a clean Hermes host, follow the [setup guide for Hermes agents](docs/setup-for-hermes-agents.md). For the authority boundaries, runtime topology, and Mermaid diagrams, read [architecture](docs/architecture.md).
+Start a new Hermes session after enabling the plugin. It registers the `subspace_review_gate` toolset and installs the `subspace-review-gate` skill.
 
 ## Quick start
 
-Create an artifact first, then create a Briefing:
+Create a complete artifact first. Then create and verify one immutable Briefing:
 
 ```bash
 subspace-review-gate create \
@@ -70,9 +83,9 @@ subspace-review-gate create \
 subspace-review-gate verify --briefing ./.review/briefing-readme-r1.json
 ```
 
-The generated Briefing contains fixed raw-byte `sha256:` revisions. Do not hand-edit it after sharing.
+A Briefing fixes one question, its artifact revision, and its routes. If any of those change, create a new Briefing instead of editing the existing one.
 
-Open the artifact in the patched Human Review fork, then render a Slack companion message:
+Render the matching Slack companion only after verification:
 
 ```bash
 subspace-review-gate render-slack \
@@ -80,199 +93,22 @@ subspace-review-gate render-slack \
   --human-review-url 'http://100.x.y.z:17891/s/s_example'
 ```
 
-A reviewer may leave detailed comments in Human Review, then select a Slack route. Convert a selected option into contract entries:
+Use `build-resolution` only for an explicit route choice. `revise` and `hold` need a reason or included feedback evidence.
 
-```bash
-subspace-review-gate build-resolution \
-  --briefing ./.review/briefing-readme-r1.json \
-  --choice 2 \
-  --reason 'Add a concrete example before publication.'
-```
+## Where to read next
 
-`revise` and `hold` require a reason or a prior included Annotation. `approve` still preserves the exact chosen route and its destination—decision alone is not routing.
-
-## External Human Review runtime
-
-The plugin now manages the tested temporary public-review path. It uses the patched [quinn-code-agent/human-review](https://github.com/quinn-code-agent/human-review) fork: stock Human Review redirects a remote viewer's artifact iframe to its own `127.0.0.1`; the fork preserves the reachable external origin while keeping local loopback isolation.
-
-### Prerequisites
-
-A new Hermes host needs only:
-
-1. Hermes Agent with this plugin installed and enabled;
-2. Python 3 and Node.js 20+ (`node`, `npm`);
-3. `cloudflared` on `PATH` with outbound access to Cloudflare;
-4. permission to install the public Human Review fork globally through npm, or a preinstalled `human-review` command;
-5. the local artifact to review.
-
-No Cloudflare account, DNS setup, Tailscale, or API key is required for a **temporary public Quick Tunnel**. Check readiness:
-
-```bash
-subspace-review-runtime doctor
-```
-
-Install the patched viewer if missing:
-
-```bash
-subspace-review-runtime install-runtime
-```
-
-Open a verified public HTTPS viewer:
-
-```bash
-subspace-review-runtime open --artifact ./README.md
-```
-
-The command stores process state under `$HERMES_HOME/subspace-review-gate/`, creates the Human Review session, starts the loopback Host-rewriting proxy and Cloudflare Quick Tunnel, then verifies the exact public session URL returns the expected session shell. It prints the URL only after that verification.
-
-Inspect or close it:
-
-```bash
-subspace-review-runtime status
-subspace-review-runtime close
-```
-
-The corresponding Hermes tools are `subspace_review_gate_open_public_review`, `subspace_review_gate_review_status`, and `subspace_review_gate_close_public_review`.
-
-A Quick Tunnel is public, temporary, and unauthenticated: anyone with the URL can submit feedback. Keep `human-review poll <artifact> --timeout …` running while review is open, and verify a submitted test feedback batch arrives before treating the viewer as usable. For durable or sensitive review, use a named authenticated Cloudflare Tunnel + Access; that requires a Cloudflare account, owned domain/DNS, and Access policy.
-
-## Relay staging dogfood — Phase 1 feedback transport
-
-Phase 1 adds a Relay-compatible, feedback-only adapter. It intentionally does **not** create a Resolution, interpret routing, or write a workflow verdict.
-
-1. Create a Briefing with a portable relative artifact URI (the CLI now defaults to the artifact filename):
-
-```bash
-subspace-review-gate create --artifact ./README.md --artifact-uri README.md \
-  --question 'Is this README clear?' --briefing .review/briefing.json \
-  --route 'approve|Ready|publication:ready' \
-  --route 'revise|Revise|authoring:revise'
-subspace-review-gate verify --briefing .review/briefing.json
-```
-
-2. Produce and publish the exact immutable Relay package to the existing staging endpoint:
-
-```bash
-subspace-review-relay package --briefing .review/briefing.json --output-dir .review/relay-package
-subspace-review-relay publish --package .review/relay-package
-```
-
-Relay independently verifies the manifest, artifact size, URI containment, raw SHA-256 digests, and Briefing/package coherence. The publish command retains an owner receipt under `$HERMES_HOME/subspace-review-gate/relay/owners/` with mode `0600`; it never prints the device secret.
-
-3. A Web or TUI reviewer fetches and verifies the staging snapshot before rendering it:
-
-```bash
-subspace-review-relay fetch --briefing briefing:<32-lowercase-hex> --output-dir .review/fetched
-```
-
-4. Preserve Human Review as the Web feedback renderer. Convert a submitted Human Review batch to portable Subspace Annotation JSONL; this requires the externally confirmed reviewer identity and emits **no Resolution**:
-
-```bash
-subspace-review-relay annotations \
-  --briefing .review/briefing.json \
-  --feedback human-review-feedback.json \
-  --reviewer person:reviewer \
-  --output .review/review.jsonl
-```
-
-The four corresponding Hermes tools are `subspace_review_gate_relay_package`, `subspace_review_gate_relay_publish`, `subspace_review_gate_relay_fetch`, and `subspace_review_gate_relay_annotations`.
-
-Relay share URLs are bearer capabilities: do not publish sensitive artifact bytes. Stage data is separate from production data but is real remote storage and uses real Relay quotas.
-
-## Relay-hosted Review Room — Hermes owner client
-
-The plugin is the **owner client** for Relay's hosted Room; it does not host a browser,
-create public ingress, or own reviewer session authority. Relay hosts the browser surface
-and stores exact feedback bytes. Hermes verifies/publishes the immutable package, runs
-owner-authenticated lifecycle calls, and retrieves the feedback evidence.
-
-```text
-verified Briefing + package
-→ private owner receipt
-→ create Room
-→ explicit human delivery of the Room URL capability
-→ Relay-hosted browser feedback-only Result
-→ owner list / pull + SHA-256 digest record
-→ optional disable Room or revoke an arrived reviewer session
-```
-
-The **Room URL is a capability**. It is not printed by this plugin, posted to Slack,
-fan-out, logged as an operational status, or delivered by an agent automatically. A human
-owner decides whether and how it is handed to an internal, synthetic reviewer. A second
-browser arrival is another reviewer; there is no invitation creation, redemption, or
-pre-arrival revocation in this protocol.
-
-### Owner operations
-
-After publishing a verified package, the following Hermes tools operate only with the
-private `0600` owner receipt under `$HERMES_HOME/subspace-review-gate/relay/owners/`:
-
-- `subspace_review_gate_relay_create_room` creates a Room for the published Briefing.
-- `subspace_review_gate_relay_results` lists owner-visible feedback summaries. Claimed
-  names remain self-declared; a Relay participant identifier is an operator discriminator,
-  not verified identity or workflow authority.
-- `subspace_review_gate_relay_pull_result` pulls one feedback-only Result and writes its
-  exact `review.jsonl` and `result.json` bytes locally after validating the Briefing and
-  result mode; it reports SHA-256 digests with the successful pull output.
-- `subspace_review_gate_relay_disable_room` disables the Room for all sessions using the
-  non-network `room_ref` returned by creation.
-- `subspace_review_gate_relay_revoke_room_session` can revoke an arrived reviewer session
-  without disabling sibling sessions, using that same `room_ref`.
-
-The equivalent CLI operations are `create-room`, `results`, `pull-result`,
-`disable-room`, and `revoke-room-session`. No operation exposes a device secret, owner
-receipt, browser session token, CSRF value, or capability URL.
-
-### Safety boundary
-
-The plugin does not create a Resolution, does not interpret route semantics, does not
-modify workflow state, and does not host a browser. Relay Results are feedback evidence
-only. An authorized external controller/leg remains the only workflow writer. The browser
-never receives the owner device pair or receipt.
-
-The plugin makes local fake-server tests possible for owner-call wiring. That is not a
-claim that a Room has been deployed, a reviewer journey has completed, or a capability URL
-has been handed to anyone.
-
-## Legacy local Relay Web viewer
-
-`bin/subspace-relay-web` remains an optional **local development viewer** for a published
-Briefing. It is not a Relay Room host, does not replace Relay’s browser session boundary,
-and must not be used to distribute a Room/share capability or claim hosted-room evidence.
-It binds to `127.0.0.1` by default; any explicit non-loopback `--host` use is a separate
-operator-controlled exposure decision, not a plugin delivery feature.
-
-```bash
-python3 bin/subspace-relay-web open \
-  --briefing briefing:<32-lowercase-hex> \
-  --no-browser
-```
-
-It fetches and verifies the immutable package before rendering and submits only a
-feedback-mode Result. `--shared-feedback` is **off by default**. When explicitly enabled,
-the local process alone lists/pulls owner Results, filters them to portable annotations,
-and returns only that projection to its browser; it never returns owner receipts or raw
-Result files.
-
-## Slack gate UI
-
-Slack is a projection, not the portable log or workflow writer. The posted message must show:
-
-1. Briefing ID and question;
-2. fixed artifact revision;
-3. Human Review link;
-4. ordered routing options exactly as in `Routing.routes`;
-5. a clear reply-by-number instruction.
-
-Use a Slack native control only if it selects one explicit route ID. Treat all comments, questions, emoji acknowledgements, and ambiguous responses as advisory. A binding Resolution requires an externally authorized approver and must be applied by the owning workflow controller.
+- [Setup for Hermes agents](docs/setup-for-hermes-agents.md): self-installation, dependencies, smoke tests, and safe operation of the Human Review runtime and Relay owner client.
+- [Architecture](docs/architecture.md): the authority boundary between the plugin, Relay, browser reviewers, and workflow controllers.
+- [Agent skill](skills/subspace-review-gate/SKILL.md): when an installed Hermes agent should create a fixed artifact, open a review, or keep a discussion as ordinary conversation.
+- [Subspace Review & Gate v1](https://github.com/spacedock-dev/subspace-v0/blob/5e4a5f5cb7ce9521a3cc451aa9ec30ea4e6f1ddb/docs/review-and-gate.md): portable object meanings and invariants.
 
 ## Development
 
 ```bash
-python3 -m unittest -v tests/test_contract.py
+python3 -m unittest discover -s tests -v
 ```
 
-The suite verifies Briefing SHA-256 generation, digest mismatch rejection, stable Slack route ordering, and Resolution rationale/ambiguity rules.
+The suite covers Briefing identity, route validation, Relay owner boundaries, runtime behavior, documentation claims, and the local reviewer shell.
 
 ## License
 
