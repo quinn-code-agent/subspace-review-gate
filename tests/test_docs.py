@@ -19,6 +19,19 @@ class DocumentationTests(unittest.TestCase):
         ):
             self.assertIn(required, text)
 
+    def test_setup_guide_covers_self_use_and_relay_owner_client(self):
+        text = (ROOT / "docs" / "setup-for-hermes-agents.md").read_text()
+        for required in (
+            "## 4. Choose how this Hermes host will use the plugin",
+            "### Fixed-artifact review",
+            "### Relay-hosted Review Room owner client",
+            "subspace_review_gate_relay_create_room",
+            "subspace_review_gate_relay_pull_result",
+            "Room URL is a capability",
+            "skills/subspace-review-gate/SKILL.md",
+        ):
+            self.assertIn(required, text)
+
     def test_architecture_has_mermaid_and_single_writer_boundary(self):
         text = (ROOT / "docs" / "architecture.md").read_text()
         self.assertGreaterEqual(text.count("```mermaid"), 5)
