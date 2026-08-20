@@ -152,7 +152,7 @@ def publish(args):
         with urllib.request.urlopen(request, timeout=45) as response:
             response_data = json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        fail(f"Relay publish refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+        fail(f"Relay publish refused ({exc.code})")
     except OSError as exc:
         fail(f"Relay publish failed: {exc}")
     if response_data.get("briefingId") != briefing["id"] or not response_data.get("shareUrl"):
@@ -276,7 +276,7 @@ def owner_results(args):
         with urllib.request.urlopen(request, timeout=45) as response:
             payload = json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        fail(f"Relay Results pull refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+        fail(f"Relay Results pull refused ({exc.code})")
     except OSError as exc:
         fail(f"Relay Results pull failed: {exc}")
     results = payload.get("results", [])
@@ -320,7 +320,7 @@ def pull_result(args):
 def fetch_bytes_request(url, headers):
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=45) as response: return response.read()
-    except urllib.error.HTTPError as exc: fail(f"Relay Result pull refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+    except urllib.error.HTTPError as exc: fail(f"Relay Result pull refused ({exc.code})")
     except OSError as exc: fail(f"Relay Result pull failed: {exc}")
 
 
@@ -360,7 +360,7 @@ def submit(args):
         with urllib.request.urlopen(request, timeout=45) as response:
             response_data = json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        fail(f"Relay Result submit refused ({exc.code}): {exc.read().decode('utf-8', 'replace')}")
+        fail(f"Relay Result submit refused ({exc.code})")
     except OSError as exc:
         fail(f"Relay Result submit failed: {exc}")
     if not response_data.get("resultId"):

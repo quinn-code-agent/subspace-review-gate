@@ -181,6 +181,9 @@ class RelayPackageTests(unittest.TestCase):
             ("/api/room/room_aaaaaaaaaaaaaaaaaaaaaaaaaa/session/ses_bbbbbbbbbbbbbbbbbbbbbbbbbb/revoke", "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "Bearer sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
         ])
 
+    def test_relay_adapter_never_echoes_http_error_bodies(self):
+        self.assertNotIn("exc.read().decode", CLI.read_text())
+
     def test_room_control_refusal_does_not_echo_remote_error_body(self):
         briefing_id = "briefing:0123456789abcdef0123456789abcdef"
         state = self.root / "state"
