@@ -210,6 +210,16 @@ def load_room_record(briefing_id, state_dir, reference):
     return room_id, endpoint.rstrip("/")
 
 
+def rfc3339_timestamp(value, label):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z", value):
+        fail(f"Relay Room control did not return valid {label} timestamp")
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        fail(f"Relay Room control did not return valid {label} timestamp")
+    return parsed.astimezone(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def owner_post(endpoint, path, receipt, body=None):
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode()
     headers = {**auth_headers(receipt), "Accept": "application/json"}
@@ -246,9 +256,8 @@ def disable_room(args):
     receipt = load_owner_receipt(args.briefing, args.state_dir)
     room_id, endpoint = load_room_record(args.briefing, args.state_dir, args.room_ref)
     payload = owner_post(endpoint, f"/api/room/{room_id}/disable", receipt)
-    if not isinstance(payload.get("disabledAt"), str) or not payload["disabledAt"]:
-        fail("Relay Room disable response did not return disabledAt")
-    print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "disabled_at": payload["disabledAt"]}, indent=2))
+    disabled_at = rfc3339_timestamp(payload.get("disabledAt"), "disabledAt")
+    print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "disabled_at": disabled_at}, indent=2))
 
 
 def revoke_room_session(args):
@@ -256,9 +265,8 @@ def revoke_room_session(args):
     room_id, endpoint = load_room_record(args.briefing, args.state_dir, args.room_ref)
     session_id = room_identifier(args.session_id, "session id")
     payload = owner_post(endpoint, f"/api/room/{room_id}/session/{session_id}/revoke", receipt)
-    if not isinstance(payload.get("revokedAt"), str) or not payload["revokedAt"]:
-        fail("Relay session revoke response did not return revokedAt")
-    print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "revoked_at": payload["revokedAt"]}, indent=2))
+    revoked_at = rfc3339_timestamp(payload.get("revokedAt"), "revokedAt")
+    print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "revoked_at": revoked_at}, indent=2))
 
 
 def owner_results(args):
