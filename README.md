@@ -43,7 +43,7 @@ verify and publish package
 → owner lists and pulls the Result
 ```
 
-The plugin is the owner client. Relay owns the Room, browser session, cookie/CSRF boundary, and immutable Result storage. The **Room URL is a capability**, not a status link. The plugin does not host a browser. It does not create a Resolution or automatically deliver a Room URL.
+The plugin is the owner client. Relay owns the Room, browser session, cookie/CSRF boundary, and immutable Result storage. Start with `subspace_review_gate_relay_package` and `subspace_review_gate_relay_publish`, then create the Room. The **Room URL is a capability**, not a status link. The plugin does not host a browser. It does not create a Resolution or automatically deliver a Room URL.
 
 Owner controls are `subspace_review_gate_relay_create_room`, `subspace_review_gate_relay_results`, `subspace_review_gate_relay_pull_result`, `subspace_review_gate_relay_disable_room`, and `subspace_review_gate_relay_revoke_room_session`. A private `room_ref` can disable a Room. The plugin can revoke an arrived reviewer session only when an already supplied session ID is available; session IDs are not discoverable by this plugin.
 

@@ -26,6 +26,8 @@ class DocumentationTests(unittest.TestCase):
             "### Fixed-artifact review",
             "### Relay-hosted Review Room owner client",
             "subspace_review_gate_relay_create_room",
+            "subspace_review_gate_relay_package",
+            "subspace_review_gate_relay_publish",
             "subspace_review_gate_relay_pull_result",
             "subspace_review_gate_relay_disable_room",
             "subspace_review_gate_relay_revoke_room_session",
@@ -69,6 +71,8 @@ class DocumentationTests(unittest.TestCase):
         for required in (
             "Room URL is a capability",
             "subspace_review_gate_relay_create_room",
+            "subspace_review_gate_relay_package",
+            "subspace_review_gate_relay_publish",
             "subspace_review_gate_relay_pull_result",
             "does not host a browser",
             "does not create a Resolution",

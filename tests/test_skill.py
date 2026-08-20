@@ -58,6 +58,7 @@ class SubspaceReviewGateSkillTests(unittest.TestCase):
             "## Verification",
             "[Q]",
             "[RES]",
+            "Default to `[Q]`",
         ):
             self.assertIn(required, self.body)
         self.assertNotIn("/Users/", self.text)

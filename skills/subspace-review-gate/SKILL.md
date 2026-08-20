@@ -44,7 +44,7 @@ Do not use this skill for ordinary open-ended conversation. Answer or discuss no
    - For a Relay-hosted browser review, use the owner-client tools to publish, create a Room, list results, and pull a Result. Do not host the browser yourself or expose the Room capability automatically.
    Completion criterion: every reviewer sees the same fixed Briefing revision.
 4. **Collect feedback as evidence.** Treat reviewer comments as portable `Annotation` evidence. Treat a Relay feedback Result as feedback only. Completion criterion: evidence is tied to the Briefing and does not alter artifact bytes.
-5. **Handle discussion and decisions separately.** `[Q]` means answer or discuss only. `[RES]` requires an explicit entity-specific choice or imperative. For an explicit route selection, use `subspace_review_gate_build_resolution`; `revise` and `hold` require a reason or included Annotation. Completion criterion: the chosen route ID and destination are unambiguous.
+5. **Handle discussion and decisions separately.** `[Q]` means answer or discuss only. `[RES]` requires an explicit entity-specific choice or imperative. Default to `[Q]` when the signal is absent or ambiguous. For an explicit route selection, use `subspace_review_gate_build_resolution`; `revise` and `hold` require a reason or included Annotation. Completion criterion: the chosen route ID and destination are unambiguous.
 6. **Hand off workflow changes.** Only a workflow controller or dispatched leg may apply a binding Resolution to a workflow. For an artifact without a workflow, preserve the portable outcome beside the Briefing. Completion criterion: any state change has separate controller evidence.
 
 ## Slack projection

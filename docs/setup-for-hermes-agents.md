@@ -125,7 +125,8 @@ Use this when Relay should host the browser review surface for an immutable Brie
 
 ```text
 verify Briefing
-→ package and publish
+→ subspace_review_gate_relay_package
+→ subspace_review_gate_relay_publish
 → private owner receipt
 → subspace_review_gate_relay_create_room
 → human deliberately delivers Room URL capability
