@@ -285,14 +285,15 @@ def owner_results(args):
         for result in results:
             if not isinstance(result, dict):
                 continue
+            result_id = result.get("resultId")
+            if not isinstance(result_id, str) or not re.fullmatch(r"res_[a-z2-7]{26}", result_id):
+                result_id = None
             claimed_name = result.get("actor") if isinstance(result.get("actor"), str) else None
             participant = result.get("participant") if isinstance(result.get("participant"), str) else None
-            if claimed_name is None and participant is None:
-                continue
             attribution = (claimed_name or "unknown claimed name") + " (self-declared)"
             if participant:
                 attribution += " · " + participant
-            operator_summaries.append({"result_id": result.get("resultId"), "claimed_name": claimed_name, "participant": participant, "attribution": attribution})
+            operator_summaries.append({"result_id": result_id, "claimed_name": claimed_name, "participant": participant, "attribution": attribution})
     print(json.dumps({"ok": True, "briefing": briefing_id, "result_count": len(results) if isinstance(results, list) else 0, "operator_summaries": operator_summaries, "listStale": payload.get("listStale", False)}, indent=2))
 
 

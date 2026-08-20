@@ -187,7 +187,10 @@ class RelayPackageTests(unittest.TestCase):
         receipt = state / "owners" / f"{briefing_id}.json"
         receipt.parent.mkdir(parents=True)
         receipt.write_text(json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
-        raw_results = [{"resultId": "res_aaaaaaaaaaaaaaaaaaaaaaaaaa", "actor": "person:kent", "participant": "par_bbbbbbbbbbbbbbbbbbbbbbbbbb", "untrustedCapability": "https://relay.example/r/not-for-output"}]
+        raw_results = [
+            {"resultId": "res_aaaaaaaaaaaaaaaaaaaaaaaaaa", "actor": "person:kent", "participant": "par_bbbbbbbbbbbbbbbbbbbbbbbbbb", "untrustedCapability": "https://relay.example/r/not-for-output"},
+            {"resultId": "res_bbbbbbbbbbbbbbbbbbbbbbbbbb"},
+        ]
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 raw = json.dumps({"results": raw_results, "listStale": False}).encode()
@@ -202,12 +205,21 @@ class RelayPackageTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertNotIn("results", payload)
         self.assertNotIn("untrustedCapability", result.stdout)
-        self.assertEqual(payload["operator_summaries"], [{
-            "result_id": "res_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "claimed_name": "person:kent",
-            "participant": "par_bbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "attribution": "person:kent (self-declared) · par_bbbbbbbbbbbbbbbbbbbbbbbbbb",
-        }])
+        self.assertEqual(payload["result_count"], 2)
+        self.assertEqual(payload["operator_summaries"], [
+            {
+                "result_id": "res_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "claimed_name": "person:kent",
+                "participant": "par_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "attribution": "person:kent (self-declared) · par_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+            },
+            {
+                "result_id": "res_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "claimed_name": None,
+                "participant": None,
+                "attribution": "unknown claimed name (self-declared)",
+            },
+        ])
 
     def test_pull_result_refuses_invalid_result_before_writing_any_bytes(self):
         briefing_id = "briefing:0123456789abcdef0123456789abcdef"

@@ -53,6 +53,8 @@ class SubspaceReviewGateSkillTests(unittest.TestCase):
             "subspace_review_gate_create",
             "subspace_review_gate_verify",
             "subspace_review_gate_build_resolution",
+            "subspace_review_gate_relay_package",
+            "subspace_review_gate_relay_publish",
             "workflow controller or dispatched leg",
             "## Pitfalls",
             "## Verification",
