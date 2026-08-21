@@ -190,7 +190,11 @@ flowchart LR
 ```
 
 The **Room URL capability** is deliberately outside the tool output and automatic agent
-delivery paths. Relay results remain advisory evidence: the plugin validates bytes and
-reports them, but never maps them to a verdict. Local Human Review remains an optional
+delivery paths. Owner feedback has two separate projections over the same validated Result:
+`relay_results` returns structural metadata only to the agent, while `relay_owner_inbox`
+writes a private local human-facing HTML snapshot containing escaped reviewer labels and
+feedback. The snapshot is not a server and does not enable reviewer-to-reviewer sharing.
+Relay results remain advisory evidence: the plugin validates bytes and computes local
+digests, but never maps them to a verdict. Local Human Review remains an optional
 separate surface when Relay/network access is not appropriate; it is not a fallback Relay
 host.
