@@ -189,8 +189,14 @@ flowchart LR
     style G fill:#312e81,stroke:#a78bfa,color:#fff
 ```
 
-The **Room URL capability** is deliberately outside the tool output and automatic agent
-delivery paths. Relay results remain advisory evidence: the plugin validates bytes and
-reports them, but never maps them to a verdict. Local Human Review remains an optional
-separate surface when Relay/network access is not appropriate; it is not a fallback Relay
-host.
+The high-level consent operation releases a **Room URL capability** only after a clear Yes,
+actual capability preflight, immutable byte verification, and a Room response carrying a
+safe HTTPS URL and authoritative `expiresAt`. Owner receipts, Room references, IDs, local
+paths, and remote error bodies remain private.
+
+Feedback monitoring is a detached owner-client process, not a Slack foreground wait. It is
+bound to one private Room record and one dispatch-origin thread, persists a Result-ID cursor,
+and accepts an event only after owner pull verifies the listing digests and exact Result bytes
+against the packaged Briefing, feedback-only mode, and artifact revision. The projected event
+is fixed safe text; untrusted feedback stays in private owner storage. Relay results remain
+advisory evidence and are never mapped to a verdict or workflow transition.

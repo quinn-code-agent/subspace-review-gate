@@ -39,6 +39,9 @@ class PluginRegistrationTests(unittest.TestCase):
             "subspace_review_gate_relay_create_room",
             "subspace_review_gate_relay_disable_room",
             "subspace_review_gate_relay_revoke_room_session",
+            "subspace_review_gate_relay_share_consented",
+            "subspace_review_gate_relay_watch_feedback",
+            "subspace_review_gate_relay_stop_feedback_watch",
         ])
         self.assertTrue(all(entry["toolset"] == "subspace_review_gate" for entry in ctx.tools))
 
@@ -72,8 +75,29 @@ class PluginRegistrationTests(unittest.TestCase):
             "subspace_review_gate_relay_create_room",
             "subspace_review_gate_relay_disable_room",
             "subspace_review_gate_relay_revoke_room_session",
+            "subspace_review_gate_relay_share_consented",
+            "subspace_review_gate_relay_watch_feedback",
+            "subspace_review_gate_relay_stop_feedback_watch",
         ):
             self.assertIn(name, tools)
+
+    def test_high_level_share_requires_consent_bound_revision_and_disclosures(self):
+        ctx = Context()
+        PLUGIN.register(ctx)
+        entry = next(tool for tool in ctx.tools if tool["name"] == "subspace_review_gate_relay_share_consented")
+        required = entry["schema"]["parameters"]["required"]
+        for field in ("artifact", "question", "consent", "consented_revision", "audience", "media_type", "sensitivity", "briefing", "package", "state_dir"):
+            self.assertIn(field, required)
+        self.assertIn("returns only", entry["schema"]["description"])
+
+    def test_background_watcher_binds_origin_and_never_claims_workflow_authority(self):
+        ctx = Context()
+        PLUGIN.register(ctx)
+        entry = next(tool for tool in ctx.tools if tool["name"] == "subspace_review_gate_relay_watch_feedback")
+        required = entry["schema"]["parameters"]["required"]
+        self.assertEqual(required, ["briefing", "room_ref", "origin_channel", "origin_thread", "outbox", "state_dir"])
+        self.assertIn("background", entry["schema"]["description"])
+        self.assertIn("does not advance", entry["schema"]["description"])
 
     def test_plugin_returns_json_error_for_missing_briefing(self):
         result = json.loads(PLUGIN.verify({"briefing": "/definitely/missing.json"}))

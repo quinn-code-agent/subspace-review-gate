@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,11 @@ CLI = ROOT / "bin" / "subspace-review-relay"
 
 def run(*args, check=True):
     return subprocess.run([sys.executable, str(CLI), *args], text=True, capture_output=True, check=check)
+
+
+def write_private_fixture(path, content):
+    path.write_text(content)
+    os.chmod(path, 0o600)
 
 
 class RelayPackageTests(unittest.TestCase):
@@ -108,7 +114,7 @@ class RelayPackageTests(unittest.TestCase):
         state = self.root / "state"
         receipt = state / "owners" / f"{briefing_id}.json"
         receipt.parent.mkdir(parents=True)
-        receipt.write_text(json.dumps({
+        write_private_fixture(receipt, json.dumps({
             "briefing": briefing_id,
             "endpoint": "http://unused.example",
             "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -152,11 +158,11 @@ class RelayPackageTests(unittest.TestCase):
         state = self.root / "state"
         receipt = state / "owners" / f"{briefing_id}.json"
         receipt.parent.mkdir(parents=True)
-        receipt.write_text(json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
+        write_private_fixture(receipt, json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
         room_ref = "roomref_aaaaaaaaaaaaaaaaaaaaaaaaaa"
         room = state / "rooms" / briefing_id / f"{room_ref}.json"
         room.parent.mkdir(parents=True)
-        room.write_text(json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "roomId": "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "origin": "http://unused.example"}))
+        write_private_fixture(room, json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "roomId": "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "origin": "http://unused.example"}))
         seen = []
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -169,7 +175,7 @@ class RelayPackageTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         try:
             endpoint = f"http://127.0.0.1:{server.server_port}"
-            room.write_text(json.dumps({"briefing": briefing_id, "endpoint": endpoint, "roomId": "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "origin": endpoint}))
+            write_private_fixture(room, json.dumps({"briefing": briefing_id, "endpoint": endpoint, "roomId": "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "origin": endpoint}))
             disabled = run("disable-room", "--briefing", briefing_id, "--room-ref", room_ref, "--state-dir", str(state))
             revoked = run("revoke-room-session", "--briefing", briefing_id, "--room-ref", room_ref, "--session-id", "ses_bbbbbbbbbbbbbbbbbbbbbbbbbb", "--state-dir", str(state))
         finally:
@@ -189,7 +195,7 @@ class RelayPackageTests(unittest.TestCase):
         state = self.root / "state"
         receipt = state / "owners" / f"{briefing_id}.json"
         receipt.parent.mkdir(parents=True)
-        receipt.write_text(json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
+        write_private_fixture(receipt, json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
         room_ref = "roomref_aaaaaaaaaaaaaaaaaaaaaaaaaa"
         room = state / "rooms" / briefing_id / f"{room_ref}.json"
         room.parent.mkdir(parents=True)
@@ -202,7 +208,7 @@ class RelayPackageTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         try:
             endpoint = f"http://127.0.0.1:{server.server_port}"
-            room.write_text(json.dumps({"briefing": briefing_id, "endpoint": endpoint, "roomId": "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "origin": endpoint}))
+            write_private_fixture(room, json.dumps({"briefing": briefing_id, "endpoint": endpoint, "roomId": "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "origin": endpoint}))
             result = run("disable-room", "--briefing", briefing_id, "--room-ref", room_ref, "--state-dir", str(state), check=False)
         finally:
             server.shutdown(); thread.join(); server.server_close()
@@ -215,7 +221,7 @@ class RelayPackageTests(unittest.TestCase):
         state = self.root / "state"
         receipt = state / "owners" / f"{briefing_id}.json"
         receipt.parent.mkdir(parents=True)
-        receipt.write_text(json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
+        write_private_fixture(receipt, json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
         room_ref = "roomref_aaaaaaaaaaaaaaaaaaaaaaaaaa"
         room = state / "rooms" / briefing_id / f"{room_ref}.json"
         room.parent.mkdir(parents=True)
@@ -228,7 +234,7 @@ class RelayPackageTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
         try:
             endpoint = f"http://127.0.0.1:{server.server_port}"
-            room.write_text(json.dumps({"briefing": briefing_id, "endpoint": endpoint, "roomId": "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "origin": endpoint}))
+            write_private_fixture(room, json.dumps({"briefing": briefing_id, "endpoint": endpoint, "roomId": "room_aaaaaaaaaaaaaaaaaaaaaaaaaa", "origin": endpoint}))
             result = run("disable-room", "--briefing", briefing_id, "--room-ref", room_ref, "--state-dir", str(state), check=False)
         finally:
             server.shutdown(); thread.join(); server.server_close()
@@ -241,7 +247,7 @@ class RelayPackageTests(unittest.TestCase):
         state = self.root / "state"
         receipt = state / "owners" / f"{briefing_id}.json"
         receipt.parent.mkdir(parents=True)
-        receipt.write_text(json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
+        write_private_fixture(receipt, json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
         raw_results = [
             {"resultId": "res_aaaaaaaaaaaaaaaaaaaaaaaaaa", "actor": "person:kent", "participant": "par_bbbbbbbbbbbbbbbbbbbbbbbbbb", "untrustedCapability": "https://relay.example/r/not-for-output"},
             {"resultId": "res_bbbbbbbbbbbbbbbbbbbbbbbbbb"},
@@ -291,7 +297,7 @@ class RelayPackageTests(unittest.TestCase):
         state = self.root / "state"
         receipt = state / "owners" / f"{briefing_id}.json"
         receipt.parent.mkdir(parents=True)
-        receipt.write_text(json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
+        write_private_fixture(receipt, json.dumps({"briefing": briefing_id, "endpoint": "http://unused.example", "deviceId": "dev_aaaaaaaaaaaaaaaaaaaaaaaaaa", "deviceSecret": "sec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}))
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 raw = b'{"type":"review-v1-result","mode":"decision","briefing":"briefing:other"}' if self.path.endswith("result.json") else b'{"type":"Annotation"}\n'

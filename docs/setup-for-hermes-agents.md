@@ -147,6 +147,10 @@ Session IDs are not discoverable by this plugin. Do not guess, derive, log, or r
 
 The browser receives no owner device secret, owner receipt, or workflow authority. Relay feedback remains evidence; it does not become a Resolution or workflow verdict automatically.
 
+For the clear-Yes journey, prefer `subspace_review_gate_relay_share_consented` over manually chaining the lower-level calls. The caller must bind the exact revision and the pre-upload disclosures (question, audience, explicit media type, and non-sensitive classification). The operation asks Relay for actual one-artifact, media, size, URL-return, and expiry capabilities before upload, reverifies bytes before publication, and returns only a validated HTTPS Room URL plus Relay's actual `expiresAt`. Missing or changed facts fail closed.
+
+After sharing, `subspace_review_gate_relay_watch_feedback` starts a detached Room-scoped watcher. Bind `origin_channel` and `origin_thread` from the dispatch context and use a private outbox consumed by the Slack dispatcher; do not point it at a different conversation. The watcher persists processed Result IDs, owner-pulls and digest-checks exact feedback bytes, validates the Briefing, feedback mode, and artifact revision, and writes only a fixed safe advisory event. It never includes raw feedback and never applies a workflow decision. Use `subspace_review_gate_relay_stop_feedback_watch` for explicit user stop; Room disable, Briefing expiry, and optional first-valid-feedback mode also stop it.
+
 ## 5. Agent self-use
 
 The runtime guidance for an installed agent is [skills/subspace-review-gate/SKILL.md](../skills/subspace-review-gate/SKILL.md).

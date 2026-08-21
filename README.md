@@ -43,13 +43,13 @@ verify and publish package
 → owner lists and pulls the Result
 ```
 
-The plugin is the owner client. Relay owns the Room, browser session, cookie/CSRF boundary, and immutable Result storage. Start with `subspace_review_gate_relay_package` and `subspace_review_gate_relay_publish`, then create the Room. The **Room URL is a capability**, not a status link. The plugin does not host a browser. It does not create a Resolution or automatically deliver a Room URL.
+The plugin is the owner client. Relay owns the Room, browser session, cookie/CSRF boundary, and immutable Result storage. The **Room URL is a capability**, not a status link. The plugin does not host a browser and does not create a Resolution.
 
-Owner controls are `subspace_review_gate_relay_create_room`, `subspace_review_gate_relay_results`, `subspace_review_gate_relay_pull_result`, `subspace_review_gate_relay_disable_room`, and `subspace_review_gate_relay_revoke_room_session`. A private `room_ref` can disable a Room. The plugin can revoke an arrived reviewer session only when an already supplied session ID is available; session IDs are not discoverable by this plugin.
+`subspace_review_gate_relay_share_consented` is the high-level clear-Yes path. It requires the disclosed artifact revision, audience, media type, and non-sensitive classification; checks Relay's actual capability limits; then creates, verifies, packages, publishes, and creates the Room. It returns only the validated Room URL and Relay's authoritative `expiresAt`. Unknown capabilities, changed bytes, ambiguous consent, unsupported media, malformed responses, or sensitivity refuse with no shareable URL.
 
-### Legacy local Relay Web viewer
+`subspace_review_gate_relay_watch_feedback` starts a Room-scoped background watcher so Slack foreground handling does not block. The watcher owner-pulls exact bytes, validates the Result ID, Room, Briefing, feedback-only mode, artifact identity, and server digests, then emits one safe advisory event to the dispatch-bound origin-thread outbox. Its private cursor survives restart and deduplicates Result IDs. Feedback never advances workflow state. It stops when the Room is disabled, the Briefing expires, the user requests stop, or optional first-valid-feedback mode succeeds.
 
-`bin/subspace-relay-web` is an optional local development viewer for a published Briefing. It is not a Relay Room host and must not be used to distribute a Room or share capability. It binds to `127.0.0.1` by default.
+Lower-level owner controls remain available: `subspace_review_gate_relay_package`, `subspace_review_gate_relay_publish`, `subspace_review_gate_relay_create_room`, `subspace_review_gate_relay_results`, `subspace_review_gate_relay_pull_result`, `subspace_review_gate_relay_disable_room`, and `subspace_review_gate_relay_revoke_room_session`. A private `room_ref` can disable a Room. The plugin can revoke an arrived reviewer session only when an already supplied session ID is available; session IDs are not discoverable by this plugin.
 
 ## What this plugin does not do
 
@@ -117,7 +117,7 @@ A Slack review message must include the Briefing ID, question, fixed revision, r
 python3 -m unittest discover -s tests -v
 ```
 
-The suite covers Briefing identity, route validation, Relay owner boundaries, runtime behavior, documentation claims, and the local reviewer shell.
+The suite covers Briefing identity, route validation, Relay owner boundaries, consent and watcher behavior, runtime behavior, and documentation claims.
 
 ## License
 
