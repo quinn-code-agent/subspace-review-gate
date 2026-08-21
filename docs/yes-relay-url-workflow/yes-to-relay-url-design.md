@@ -11,6 +11,18 @@ worktree: .worktrees/spacedock-ensign-yes-to-relay-url-design
 issue:
 pr:
 mod-block:
+gates:
+    version: 1
+    records:
+        - id: gate:pj0cksg00ebxtyvbaabv2kdz:ideation
+          stage: ideation
+          attempts:
+            - id: gate-attempt:pj0cksg00ebxtyvbaabv2kdz-ideation-1
+              briefing:
+                id: briefing:pj0cksg00ebxtyvbaabv2kdz:ideation:attempt-1:revision-1
+                digest: sha256:1c5ab49eadf262614e5953f7fbbe8a8b76cd26d00d604707145269d1200e771b
+                request-digest: sha256:5d9b27c3c55c75cc239cec96cfe056fd7b5a20b6cebfa1d9cbd89684538d3df5
+                room-ref: ./yes-to-relay-url-design/review/ideation/briefing-1
 ---
 
 Create and verify a reviewable architecture and UX design for a future high-level operation that turns a clear Yes into a safe Relay Room URL for one finished identifiable artifact. Stop at the design artifact confirmation gate; do not implement or deliver the feature.
