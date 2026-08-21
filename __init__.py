@@ -1,7 +1,9 @@
 """Hermes plugin registration for Subspace Review & Gate v1 helpers."""
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -140,6 +142,46 @@ def relay_revoke_room_session(args, **_):
     return relay_call(*command)
 
 
+def relay_share_consented(args, **_):
+    command = [
+        "share-consented", "--artifact", args["artifact"], "--question", args["question"],
+        "--briefing", args["briefing"], "--package", args["package"],
+        "--consent", args["consent"], "--consented-revision", args["consented_revision"],
+        "--audience", args["audience"], "--media-type", args["media_type"],
+        "--sensitivity", args["sensitivity"], "--state-dir", args["state_dir"],
+    ]
+    if args.get("endpoint"): command.extend(["--endpoint", args["endpoint"]])
+    return relay_call(*command)
+
+
+def relay_watch_feedback(args, **_):
+    state = Path(args["state_dir"]).expanduser().resolve()
+    logs = state / "watchers" / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    identity = "\0".join((args["briefing"], args["room_ref"], args["origin_channel"], args["origin_thread"]))
+    watcher_ref = "watcher_" + hashlib.sha256(identity.encode()).hexdigest()[:20]
+    command = [
+        sys.executable, str(ROOT / "bin" / "subspace-review-relay"), "watch-feedback",
+        "--briefing", args["briefing"], "--room-ref", args["room_ref"],
+        "--origin-channel", args["origin_channel"], "--origin-thread", args["origin_thread"],
+        "--outbox", args["outbox"], "--state-dir", args["state_dir"],
+        "--interval", str(args.get("interval", 15)),
+    ]
+    if args.get("first_valid"):
+        command.append("--first-valid")
+    stdout_path = logs / f"{watcher_ref}.out"
+    stderr_path = logs / f"{watcher_ref}.err"
+    with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, start_new_session=True)
+    os.chmod(stdout_path, 0o600)
+    os.chmod(stderr_path, 0o600)
+    return json.dumps({"ok": True, "watcher_ref": watcher_ref, "background": True, "pid": process.pid})
+
+
+def relay_stop_feedback_watch(args, **_):
+    return relay_call("stop-feedback-watch", "--briefing", args["briefing"], "--room-ref", args["room_ref"], "--state-dir", args["state_dir"])
+
+
 def schema(name, description, properties, required):
     return {"name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": required}}
 
@@ -181,3 +223,17 @@ def register(ctx):
         schema=schema("subspace_review_gate_relay_disable_room", "Disable a Relay Review Room using its private non-network room reference and owner receipt. This does not expose the Room capability or write a workflow verdict.", {**common, "room_ref": {"type": "string"}, "state_dir": {"type": "string", "description": "Optional private owner-receipt directory."}}, ["briefing", "room_ref"]), handler=relay_disable_room)
     ctx.register_tool(name="subspace_review_gate_relay_revoke_room_session", toolset="subspace_review_gate", emoji="🚫", check_fn=available,
         schema=schema("subspace_review_gate_relay_revoke_room_session", "Revoke one arrived reviewer session using a private non-network Room reference and owner receipt. This does not expose a Room capability or write workflow state.", {**common, "room_ref": {"type": "string"}, "session_id": {"type": "string"}, "state_dir": {"type": "string", "description": "Optional private owner-receipt directory."}}, ["briefing", "room_ref", "session_id"]), handler=relay_revoke_room_session)
+    share_props = {
+        "artifact": {"type": "string"}, "question": {"type": "string"}, "briefing": {"type": "string"},
+        "package": {"type": "string"}, "consent": {"type": "string", "description": "The clear affirmative reply to the disclosed offer."},
+        "consented_revision": {"type": "string"}, "audience": {"type": "string"}, "media_type": {"type": "string"},
+        "sensitivity": {"type": "string", "enum": ["non-sensitive", "sensitive", "unknown"]},
+        **relay_endpoint, "state_dir": {"type": "string", "description": "Private operation and owner-state directory."},
+    }
+    ctx.register_tool(name="subspace_review_gate_relay_share_consented", toolset="subspace_review_gate", emoji="🔗", check_fn=available,
+        schema=schema("subspace_review_gate_relay_share_consented", "After one clear Yes, fail-closed preflight, create, verify, package, publish, and create a Room; returns only the safe Room URL and authoritative expiresAt.", share_props, ["artifact", "question", "consent", "consented_revision", "audience", "media_type", "sensitivity", "briefing", "package", "state_dir"]), handler=relay_share_consented)
+    watch_props = {**common, "room_ref": {"type": "string"}, "origin_channel": {"type": "string"}, "origin_thread": {"type": "string"}, "outbox": {"type": "string"}, "state_dir": {"type": "string"}, "interval": {"type": "number"}, "first_valid": {"type": "boolean"}}
+    ctx.register_tool(name="subspace_review_gate_relay_watch_feedback", toolset="subspace_review_gate", emoji="👀", check_fn=available,
+        schema=schema("subspace_review_gate_relay_watch_feedback", "Start a Room-scoped background feedback watcher bound to the dispatch-origin Slack thread. It emits only a safe advisory event and does not advance workflow state.", watch_props, ["briefing", "room_ref", "origin_channel", "origin_thread", "outbox", "state_dir"]), handler=relay_watch_feedback)
+    ctx.register_tool(name="subspace_review_gate_relay_stop_feedback_watch", toolset="subspace_review_gate", emoji="⏹️", check_fn=available,
+        schema=schema("subspace_review_gate_relay_stop_feedback_watch", "Persist an explicit user-stop marker for a Room feedback watcher.", {**common, "room_ref": {"type": "string"}, "state_dir": {"type": "string"}}, ["briefing", "room_ref", "state_dir"]), handler=relay_stop_feedback_watch)

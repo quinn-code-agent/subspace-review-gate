@@ -4,14 +4,18 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import secrets
+import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 SAFE_URI = re.compile(r"^(?![.-])(?:[A-Za-z0-9._-]+/){0,7}[A-Za-z0-9._-]+$")
 BRIEFING_ID = re.compile(r"^briefing:[0-9a-f]{32}$")
@@ -114,6 +118,12 @@ def owner_state_dir(value):
 def write_private_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n")
+    os.chmod(path, 0o600)
+
+
+def write_private_bytes(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
     os.chmod(path, 0o600)
 
 
@@ -247,8 +257,14 @@ def create_room(args):
     origin = payload.get("origin")
     if payload.get("briefingId") != args.briefing or not isinstance(origin, str) or not origin:
         fail("Relay Room create response did not return matching briefingId and origin")
+    capability = {}
+    if "roomUrl" in payload or "expiresAt" in payload:
+        capability = {
+            "roomUrl": safe_room_url(payload.get("roomUrl")),
+            "expiresAt": rfc3339_timestamp(payload.get("expiresAt"), "expiresAt"),
+        }
     reference = "roomref_" + base32_unpadded(16)
-    write_private_json(room_record_path(args.briefing, args.state_dir, reference), {"version": 1, "briefing": args.briefing, "endpoint": endpoint, "origin": origin, "roomId": room_id})
+    write_private_json(room_record_path(args.briefing, args.state_dir, reference), {"version": 1, "briefing": args.briefing, "endpoint": endpoint, "origin": origin, "roomId": room_id, **capability})
     print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": reference}, indent=2))
 
 
@@ -257,6 +273,10 @@ def disable_room(args):
     room_id, endpoint = load_room_record(args.briefing, args.state_dir, args.room_ref)
     payload = owner_post(endpoint, f"/api/room/{room_id}/disable", receipt)
     disabled_at = rfc3339_timestamp(payload.get("disabledAt"), "disabledAt")
+    record_path = room_record_path(args.briefing, args.state_dir, args.room_ref)
+    record = load_json(record_path, "private Room record")
+    record["disabledAt"] = disabled_at
+    write_private_json(record_path, record)
     print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "disabled_at": disabled_at}, indent=2))
 
 
@@ -497,6 +517,269 @@ def annotations(args):
     print(json.dumps({"ok": True, "briefing": briefing["id"], "annotations": len(entries), "review": str(output)}, indent=2))
 
 
+def safe_room_url(value):
+    if not isinstance(value, str):
+        fail("Relay Room create response did not return a safe Room URL")
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        fail("Relay Room create response did not return a safe Room URL")
+    if not parsed.path.startswith("/room/") or parsed.path.endswith("/"):
+        fail("Relay Room create response did not return a safe Room URL")
+    return value
+
+
+def owner_get_json(endpoint, path, receipt, label):
+    request = urllib.request.Request(endpoint.rstrip("/") + path, headers={**auth_headers(receipt), "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        fail(f"{label} refused ({exc.code})")
+    except OSError as exc:
+        fail(f"{label} failed: {exc}")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail(f"{label} returned invalid JSON")
+
+
+def capability_preflight(endpoint, media_type, artifact_size):
+    request = urllib.request.Request(endpoint.rstrip("/") + "/api/capabilities/review-room", headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        fail(f"Relay capability preflight refused ({exc.code}); no shareable URL was produced")
+    except OSError as exc:
+        fail(f"Relay capability preflight failed: {exc}; no shareable URL was produced")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("Relay capability preflight returned invalid JSON; no shareable URL was produced")
+    accepted = payload.get("acceptedMediaTypes")
+    limit = payload.get("maxArtifactBytes")
+    complete = (
+        payload.get("oneArtifact") is True
+        and payload.get("roomUrlResponse") is True
+        and payload.get("expiresAtResponse") is True
+        and isinstance(accepted, list)
+        and all(isinstance(item, str) for item in accepted)
+        and isinstance(limit, int) and not isinstance(limit, bool) and limit > 0
+    )
+    if not complete:
+        fail("Relay capability preflight is incomplete or unknown; no shareable URL was produced")
+    if media_type not in accepted or artifact_size > limit:
+        fail("Relay capability preflight does not support this artifact; no shareable URL was produced")
+
+
+def run_json_command(command, label):
+    result = subprocess.run(command, text=True, capture_output=True)
+    if result.returncode:
+        fail(f"{label} failed; no shareable URL was produced")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        fail(f"{label} returned invalid local output; no shareable URL was produced")
+
+
+def artifact_revision(path):
+    return "sha256:" + sha256_bytes(Path(path).read_bytes())
+
+
+def consent_operation_identity(args, artifact, revision):
+    return {
+        "version": 1,
+        "artifact": str(artifact),
+        "revision": revision,
+        "question": args.question,
+        "audience": args.audience,
+        "mediaType": args.media_type,
+        "sensitivity": args.sensitivity,
+        "endpoint": args.endpoint.rstrip("/"),
+        "briefing": str(Path(args.briefing).resolve()),
+        "package": str(Path(args.package).resolve()),
+    }
+
+
+def consent_operation_path(state_dir, identity):
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    return owner_state_dir(state_dir) / "operations" / "share-consented" / f"{sha256_bytes(encoded)}.json"
+
+
+def share_consented(args):
+    if not re.fullmatch(r"yes(?:,\s*share it)?[.!]?", args.consent.strip(), re.IGNORECASE):
+        fail("a clear Yes to this exact offer is required; no network action was taken")
+    if args.sensitivity != "non-sensitive":
+        fail("artifact sensitivity is unknown or sensitive; no network action was taken")
+    artifact = Path(args.artifact).resolve()
+    if not artifact.is_file() or not os.access(artifact, os.R_OK):
+        fail("artifact must be one readable regular file")
+    if not args.question.strip() or not args.audience.strip():
+        fail("review question and intended audience are required")
+    if not isinstance(args.media_type, str) or "/" not in args.media_type:
+        fail("an explicit supported media type is required")
+    initial_revision = artifact_revision(artifact)
+    if initial_revision != args.consented_revision:
+        fail("artifact changed after consent; no network action was taken")
+    operation_identity = consent_operation_identity(args, artifact, initial_revision)
+    operation_path = consent_operation_path(args.state_dir, operation_identity)
+    if operation_path.exists():
+        operation = load_json(operation_path, "private consent operation")
+        if operation.get("version") != 1 or operation.get("identity") != operation_identity:
+            fail("private consent operation state does not match this request; no network action was taken")
+        room_url = safe_room_url(operation.get("roomUrl"))
+        expires_at = rfc3339_timestamp(operation.get("expiresAt"), "expiresAt")
+        print(json.dumps({"ok": True, "room_url": room_url, "expires_at": expires_at}, indent=2))
+        return
+    briefing = Path(args.briefing).resolve()
+    try:
+        uri = artifact.relative_to(briefing.parent).as_posix()
+    except ValueError:
+        fail("artifact must be below the private operation directory")
+    safe_uri(uri)
+    capability_preflight(args.endpoint, args.media_type, artifact.stat().st_size)
+    gate_cli = Path(__file__).resolve().with_name("subspace-review-gate")
+    create = subprocess.run([
+        sys.executable, str(gate_cli), "create", "--artifact", str(artifact),
+        "--question", args.question, "--briefing", str(briefing),
+        "--artifact-uri", uri, "--media-type", args.media_type,
+    ], text=True, capture_output=True)
+    if create.returncode:
+        fail("immutable Briefing creation failed; no shareable URL was produced")
+    verify = subprocess.run([sys.executable, str(gate_cli), "verify", "--briefing", str(briefing)], text=True, capture_output=True)
+    if verify.returncode or artifact_revision(artifact) != initial_revision:
+        fail("artifact changed during Briefing verification; no shareable URL was produced")
+    relay_cli = str(Path(__file__).resolve())
+    run_json_command([sys.executable, relay_cli, "package", "--briefing", str(briefing), "--output-dir", args.package], "Relay package")
+    if artifact_revision(artifact) != initial_revision:
+        fail("artifact changed before publish; no shareable URL was produced")
+    run_json_command([sys.executable, relay_cli, "publish", "--package", args.package, "--endpoint", args.endpoint, "--state-dir", args.state_dir], "Relay publish")
+    briefing_id = load_json(briefing, "Briefing").get("id")
+    room_output = run_json_command([sys.executable, relay_cli, "create-room", "--briefing", briefing_id, "--endpoint", args.endpoint, "--state-dir", args.state_dir], "Relay Room creation")
+    reference = room_output.get("room_ref")
+    if not isinstance(reference, str):
+        fail("Relay Room creation returned no private reference; no shareable URL was produced")
+    record = load_json(room_record_path(briefing_id, args.state_dir, reference), "private Room record")
+    room_url = safe_room_url(record.get("roomUrl"))
+    expires_at = rfc3339_timestamp(record.get("expiresAt"), "expiresAt")
+    write_private_json(operation_path, {
+        "version": 1,
+        "identity": operation_identity,
+        "roomUrl": room_url,
+        "expiresAt": expires_at,
+    })
+    print(json.dumps({"ok": True, "room_url": room_url, "expires_at": expires_at}, indent=2))
+
+
+def watcher_cursor_path(briefing_id, state_dir, reference):
+    return owner_state_dir(state_dir) / "watchers" / briefing_id / f"{room_ref(reference)}.json"
+
+
+def valid_digest(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def parse_feedback_bytes(review_bytes, result_bytes, briefing, summary):
+    if sha256_bytes(review_bytes) != summary.get("reviewSha256") or sha256_bytes(result_bytes) != summary.get("resultSha256"):
+        fail("Relay feedback bytes do not match the owner Result digests")
+    try:
+        result = json.loads(result_bytes)
+        annotations = [json.loads(line) for line in review_bytes.decode("utf-8").splitlines() if line.strip()]
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("Relay feedback bytes are not valid Review v1 JSON")
+    expected_artifact = briefing["artifacts"][0]
+    if (
+        result.get("type") != "review-v1-result"
+        or result.get("mode") != "feedback"
+        or result.get("briefing") != briefing.get("id")
+        or result.get("artifact") != {key: expected_artifact[key] for key in ("id", "uri", "mediaType", "rev")}
+        or result.get("annotations") != annotations
+    ):
+        fail("pulled Result does not exactly match this feedback-only Briefing and artifact")
+
+
+def watch_feedback_once(args, emit=True):
+    receipt = load_owner_receipt(args.briefing, args.state_dir)
+    record_path = room_record_path(args.briefing, args.state_dir, args.room_ref)
+    room = load_json(record_path, "private Room record")
+    if room.get("briefing") != args.briefing:
+        fail("private Room record belongs to another Briefing")
+    if room.get("disabledAt"):
+        output = {"ok": True, "delivered": 0, "stopped": "room-disabled"}
+        if emit: print(json.dumps(output))
+        return output
+    expires_at = room.get("expiresAt")
+    if expires_at and dt.datetime.now(dt.timezone.utc) >= dt.datetime.fromisoformat(expires_at.replace("Z", "+00:00")):
+        output = {"ok": True, "delivered": 0, "stopped": "briefing-expired"}
+        if emit: print(json.dumps(output))
+        return output
+    cursor_path = watcher_cursor_path(args.briefing, args.state_dir, args.room_ref)
+    stop_path = cursor_path.with_suffix(".stop")
+    if stop_path.exists():
+        output = {"ok": True, "delivered": 0, "stopped": "user-stop"}
+        if emit: print(json.dumps(output))
+        return output
+    cursor = load_json(cursor_path, "feedback watcher cursor") if cursor_path.exists() else {"version": 1, "processedResultIds": []}
+    processed = set(cursor.get("processedResultIds", []))
+    endpoint = room.get("endpoint")
+    payload = owner_get_json(endpoint, f"/api/briefing/{args.briefing}/results", receipt, "Relay feedback watch")
+    summaries = payload.get("results")
+    if not isinstance(summaries, list):
+        fail("Relay feedback watch returned an invalid Result list")
+    package = receipt.get("package")
+    if not isinstance(package, str):
+        fail("owner receipt has no immutable package binding")
+    briefing_bytes = (Path(package) / "briefing.json").read_bytes()
+    briefing = load_json_bytes(briefing_bytes, "packaged Briefing")
+    if briefing.get("id") != args.briefing or not isinstance(briefing.get("artifacts"), list) or len(briefing["artifacts"]) != 1:
+        fail("owner package does not match the watched Briefing")
+    delivered = 0
+    for summary in summaries:
+        if not isinstance(summary, dict) or summary.get("roomId") != room.get("roomId"):
+            continue
+        result_id = summary.get("resultId")
+        if not isinstance(result_id, str) or not re.fullmatch(r"res_[a-z2-7]{26}", result_id) or result_id in processed:
+            continue
+        if not valid_digest(summary.get("reviewSha256")) or not valid_digest(summary.get("resultSha256")):
+            continue
+        headers = auth_headers(receipt)
+        review_bytes = fetch_bytes_request(endpoint.rstrip("/") + f"/api/briefing/{args.briefing}/result/{result_id}/review.jsonl", headers)
+        result_bytes = fetch_bytes_request(endpoint.rstrip("/") + f"/api/briefing/{args.briefing}/result/{result_id}/result.json", headers)
+        parse_feedback_bytes(review_bytes, result_bytes, briefing, summary)
+        pulled = owner_state_dir(args.state_dir) / "results" / args.briefing / result_id
+        write_private_bytes(pulled / "review.jsonl", review_bytes)
+        write_private_bytes(pulled / "result.json", result_bytes)
+        event = {
+            "type": "relay-feedback-received/v1", "event_id": f"relay-feedback:{result_id}",
+            "origin": {"channel": args.origin_channel, "thread": args.origin_thread},
+            "message": "Relay feedback received for the fixed review artifact. Feedback is advisory; no workflow state changed.",
+        }
+        outbox = Path(args.outbox).resolve(); outbox.parent.mkdir(parents=True, exist_ok=True)
+        with outbox.open("a") as stream:
+            stream.write(json.dumps(event, separators=(",", ":")) + "\n")
+        os.chmod(outbox, 0o600)
+        processed.add(result_id); delivered += 1
+        cursor.update({"processedResultIds": sorted(processed), "origin": event["origin"]})
+        write_private_json(cursor_path, cursor)
+        if args.first_valid:
+            break
+    output = {"ok": True, "delivered": delivered, "stopped": "first-valid-feedback" if delivered and args.first_valid else None}
+    if emit: print(json.dumps(output))
+    return output
+
+
+def watch_feedback(args):
+    while True:
+        output = watch_feedback_once(args, emit=False)
+        if output.get("stopped"):
+            print(json.dumps(output))
+            return
+        time.sleep(args.interval)
+
+
+def stop_feedback_watch(args):
+    cursor = watcher_cursor_path(args.briefing, args.state_dir, args.room_ref)
+    marker = cursor.with_suffix(".stop")
+    write_private_json(marker, {"stopped": now()})
+    print(json.dumps({"ok": True, "stopped": "user-stop"}))
+
+
 def main():
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -511,6 +794,22 @@ def main():
     result_p = commands.add_parser("build-feedback-result"); result_p.add_argument("--briefing", required=True); result_p.add_argument("--review", required=True); result_p.add_argument("--actor", required=True); result_p.add_argument("--output", required=True); result_p.set_defaults(fn=build_feedback_result)
     fetch_p = commands.add_parser("fetch"); fetch_p.add_argument("--briefing", required=True); fetch_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); fetch_p.add_argument("--output-dir", required=True); fetch_p.set_defaults(fn=fetch)
     a = commands.add_parser("annotations"); a.add_argument("--briefing", required=True); a.add_argument("--feedback", required=True); a.add_argument("--output", required=True); a.add_argument("--reviewer", help="Declared reviewer identity; required for native Human Review feedback."); a.set_defaults(fn=annotations)
+    share_p = commands.add_parser("share-consented")
+    share_p.add_argument("--artifact", required=True); share_p.add_argument("--question", required=True)
+    share_p.add_argument("--briefing", required=True); share_p.add_argument("--package", required=True)
+    share_p.add_argument("--consent", required=True); share_p.add_argument("--consented-revision", required=True)
+    share_p.add_argument("--audience", required=True); share_p.add_argument("--media-type", required=True)
+    share_p.add_argument("--sensitivity", required=True, choices=("non-sensitive", "sensitive", "unknown"))
+    share_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); share_p.add_argument("--state-dir", required=True)
+    share_p.set_defaults(fn=share_consented)
+    for command_name, function in (("watch-feedback-once", watch_feedback_once), ("watch-feedback", watch_feedback)):
+        watch_p = commands.add_parser(command_name)
+        watch_p.add_argument("--briefing", required=True); watch_p.add_argument("--room-ref", required=True)
+        watch_p.add_argument("--origin-channel", required=True); watch_p.add_argument("--origin-thread", required=True)
+        watch_p.add_argument("--outbox", required=True); watch_p.add_argument("--state-dir", required=True)
+        watch_p.add_argument("--first-valid", action="store_true"); watch_p.add_argument("--interval", type=float, default=15.0)
+        watch_p.set_defaults(fn=function)
+    stop_p = commands.add_parser("stop-feedback-watch"); stop_p.add_argument("--briefing", required=True); stop_p.add_argument("--room-ref", required=True); stop_p.add_argument("--state-dir", required=True); stop_p.set_defaults(fn=stop_feedback_watch)
     args = parser.parse_args(); args.fn(args)
 
 if __name__ == "__main__":

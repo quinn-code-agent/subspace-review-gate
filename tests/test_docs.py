@@ -80,6 +80,16 @@ class DocumentationTests(unittest.TestCase):
         ):
             self.assertIn(required, text)
         self.assertNotIn("Relay-backed Subspace Web viewer", text)
+        self.assertNotIn("Legacy local Relay Web viewer", text)
+
+    def test_hermes_repository_contains_no_duplicate_relay_web_viewer(self):
+        for removed in (
+            ROOT / "web",
+            ROOT / "bin" / "subspace-relay-web",
+            ROOT / "tests" / "test_web.py",
+            ROOT / "design-prototypes" / "floating-selection-comment.html",
+        ):
+            self.assertFalse(removed.exists(), str(removed))
 
     def test_readme_has_a_reader_path_for_product_operator_and_agent(self):
         text = (ROOT / "README.md").read_text()
