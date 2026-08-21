@@ -152,3 +152,38 @@ Implemented the consent-gated Relay owner-client flow and Room-scoped background
 - `python3 -m unittest discover -s tests -v` — PASS (50 tests).
 - `python3 -m py_compile __init__.py bin/subspace-review-gate bin/subspace-review-relay bin/subspace-review-runtime` — PASS.
 - `git diff --check` — PASS.
+
+## Stage Report: validation
+- FAILED: The clear-Yes path passes the focused synthetic journey and identical completed replay makes zero additional network calls, but the exact candidate accepts an already-expired `expiresAt` as a successful safe payload and accepts owner-secret receipts with mode `0644`; therefore safe expiry and private-state fail-closed requirements are not met.
+  Evidence for AC-1 and AC-2: focused tests passed, while the adversarial probe printed `PROBE past_expires_at: ACCEPTED 2020-01-01T00:00:00Z` and `PROBE owner_receipt_mode_0644: ACCEPTED`; `bin/subspace-review-relay:223-230,605-667` performs syntax-only expiry normalization with no future-time check, and `bin/subspace-review-relay:179-190` reads owner credentials without permission validation.
+- FAILED: The background watcher does not preserve immutable Result-ID or Slack origin-thread binding across restart/re-entry, and its detached-process launcher neither records/reuses a process nor verifies startup; these are blocking defects in the accepted Room-scoped background design.
+  Evidence for AC-4 and AC-5: the adversarial local Relay seam listed Result `res_bbbbbbbbbbbbbbbbbbbbbbbbbb` but served exact bytes whose embedded id was `res_cccccccccccccccccccccccccccc`; the candidate accepted them and emitted `event_id=relay-feedback:res_bbbbbbbbbbbbbbbbbbbbbbbbbb`. A persisted cursor bound to `C_ORIGINAL/1.1` was then accepted with caller-supplied `C_OTHER/9.9`. `bin/subspace-review-relay:678-694` never checks the pulled Result id against the listed id, `:718-759` stores but never enforces cursor origin, and `__init__.py:157-178` unconditionally spawns and returns a PID without durable process identity, readiness, reuse, or shutdown verification. Raw feedback remained absent from the emitted event and no workflow mutation exists, but those positives do not repair the binding failures.
+- DONE: Repository boundary and compatibility checks pass: the duplicated Hermes Web viewer is removed while plugin/owner-client registration, manifests, docs, focused/full tests, compilation, and diff hygiene remain green.
+  Evidence for AC-3: exact candidate `07fcf30fb5acc8effd5f11cf41480cab0b2fe53d`; `python3 -m unittest tests.test_relay_consent -v` passed 5/5, `python3 -m unittest discover -s tests -v` passed 50/50, `python3 -m py_compile __init__.py bin/subspace-review-gate bin/subspace-review-relay bin/subspace-review-runtime` passed, and both `git diff --check 4ee685f9dd52a782e03710c6413008b1aa6ca3ec..HEAD` and clean-worktree diff checks passed. The full 18-file implementation diff from `4ee685f9dd52a782e03710c6413008b1aa6ca3ec` through candidate HEAD was inspected; removals are limited to the duplicate Web viewer/prototype/tests and owner-client tools remain registered.
+
+### Summary
+
+REJECT. Candidate `07fcf30fb5acc8effd5f11cf41480cab0b2fe53d` is test-green and preserves the owner-client repository boundary, but fresh adversarial validation found blocking expiry/private-state and watcher identity/origin/process-lifecycle defects. No implementation code was changed; this validation committed only the report.
+
+### Commands and results
+
+- `python3 -m unittest tests.test_relay_consent -v` — PASS, 5 tests.
+- `python3 -m unittest discover -s tests -v` — PASS, 50 tests.
+- `python3 -m py_compile __init__.py bin/subspace-review-gate bin/subspace-review-relay bin/subspace-review-runtime` — PASS.
+- `git diff --check 4ee685f9dd52a782e03710c6413008b1aa6ca3ec..HEAD` — PASS.
+- `git diff --check && git diff --exit-code HEAD -- .` — PASS before the report edit; worktree was clean at candidate HEAD.
+- `git diff --stat --name-status 4ee685f9dd52a782e03710c6413008b1aa6ca3ec..HEAD` plus full per-file diff inspection — 18 files, 656 insertions, 270 deletions; all implementation and removal surfaces inspected.
+- Ephemeral local adversarial probe (removed after execution) — reproduced acceptance of mode-`0644` owner state, past expiry, mismatched embedded/listed Result identity, and changed origin against a persisted cursor. It used only local/synthetic HTTP seams and made no real Relay publication.
+
+### Findings and residuals
+
+1. Blocking: require authoritative expiry to be valid and future before returning/caching a Room URL; replay must re-evaluate expiry safely.
+2. Blocking: validate private owner/cursor/Room/operation state permissions on read and use atomic private writes; current chmod-after-write is not a complete private-state guarantee.
+3. Blocking: bind pulled Result identity to the listed Result ID in addition to Room, Briefing, artifact, mode, and digests.
+4. Blocking: freeze and enforce origin channel/thread and outbox for one Room watcher across cursor recovery; caller-supplied rebinding must refuse.
+5. Blocking: make watcher lifecycle durable and idempotent—readiness-checked start, one live watcher per bound identity, restart/reuse semantics, and verified stop/shutdown. The current outbox-before-cursor ordering also leaves a crash window for duplicate delivery; downstream event-id dedupe is not demonstrated here.
+6. Residual: credential-bearing `urllib` calls still use the default redirect-following opener; exact HTTPS-origin pinning/redirect refusal was not demonstrated by this candidate and should be covered before real Relay use.
+
+### Recommendation
+
+REJECT and return to implementation. Re-run the same focused/full/compile/diff gates plus red-capable adversarial tests for every blocking finding against the new exact candidate SHA. No push, PR, merge, release, deploy, runtime apply, or real Relay publication occurred.
