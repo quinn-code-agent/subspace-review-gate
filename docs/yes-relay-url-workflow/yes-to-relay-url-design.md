@@ -43,6 +43,17 @@ gates:
                 digest: sha256:6f58a293126c8b554363768dd7f4a4600578010015ac0ea0d9123df30f514d8a
                 request-digest: sha256:377cb8e7df55223e9ddb282d6985246345b20beaec9a9862b5d333b9adceb1cb
                 room-ref: ./yes-to-relay-url-design/review/validation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:pj0cksg00ebxtyvbaabv2kdz:validation:1
+                briefing: briefing:pj0cksg00ebxtyvbaabv2kdz:validation:attempt-1:revision-1
+                by: person:captain
+                at: "2026-08-21T14:03:03.764944Z"
+                decision: approve
+                reason: 接受 validation；授權 push spacedock-ensign/yes-to-relay-url-design 並開 Draft PR 供 CI 與 exact-final-SHA independent review。不授權 merge、release、deploy 或 runtime apply。
+              application:
+                target-stage: done
+                state: pending
 ---
 
 Create and verify a reviewable architecture and UX design for a future high-level operation that turns a clear Yes into a safe Relay Room URL for one finished identifiable artifact. Stop at the design artifact confirmation gate; do not implement or deliver the feature.
