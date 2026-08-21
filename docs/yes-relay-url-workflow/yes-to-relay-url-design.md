@@ -34,6 +34,15 @@ gates:
               application:
                 target-stage: implementation
                 state: consumed
+        - id: gate:pj0cksg00ebxtyvbaabv2kdz:validation
+          stage: validation
+          attempts:
+            - id: gate-attempt:pj0cksg00ebxtyvbaabv2kdz-validation-1
+              briefing:
+                id: briefing:pj0cksg00ebxtyvbaabv2kdz:validation:attempt-1:revision-1
+                digest: sha256:6f58a293126c8b554363768dd7f4a4600578010015ac0ea0d9123df30f514d8a
+                request-digest: sha256:377cb8e7df55223e9ddb282d6985246345b20beaec9a9862b5d333b9adceb1cb
+                room-ref: ./yes-to-relay-url-design/review/validation/briefing-1
 ---
 
 Create and verify a reviewable architecture and UX design for a future high-level operation that turns a clear Yes into a safe Relay Room URL for one finished identifiable artifact. Stop at the design artifact confirmation gate; do not implement or deliver the feature.
