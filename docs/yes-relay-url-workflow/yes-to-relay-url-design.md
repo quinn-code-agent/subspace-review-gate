@@ -134,16 +134,16 @@ Playwright measured viewport `1440x1800`; document `scrollWidth/clientWidth 1440
 Explicitly excluded: implementation, publication, push, PR, merge, release, deployment, Relay upload/Room creation, hard deletion, and any live runtime or remote-system modification.
 
 ## Stage Report: implementation
+- DONE: One explicit-consent operation now performs fail-closed capability preflight, immutable Briefing create/verify/package/publish, and Room creation, returning only validated `room_url` and authoritative normalized `expires_at`; identical successful replay uses `0600` private operation state and makes zero additional network calls.
+  Evidence for AC-1, AC-2, and AC-5: the focused consent-operation test passed (1 test), observed only the capability, Briefing, and Room requests on first invocation, and observed no additional requests on identical replay.
+- DONE: The Room-scoped watcher runs in the background, persists Result-ID cursor state, owner-pulls and exact-byte verifies feedback-only Results against Room/Briefing/artifact/digests, emits only one safe advisory event to the dispatch-bound Slack origin, never advances workflow state, and supports Room-disabled, Briefing-expired, explicit-stop, and first-valid-feedback termination.
+  Evidence for AC-4 and AC-5: `python3 -m unittest tests.test_relay_consent -v` passed all 5 tests, and full test discovery passed all 50 tests.
+- DONE: Removed the legacy `web/` viewer, `bin/subspace-relay-web`, and related tests/prototype while preserving Hermes plugin/owner-client tools and documentation; focused and full verification pass without network publication or runtime side effects.
+  Evidence for AC-3: full test discovery passed all 50 tests, and the reported `py_compile` check passed for `__init__.py`, `bin/subspace-review-gate`, `bin/subspace-review-relay`, and `bin/subspace-review-runtime`.
 
 ### Summary
 
 Implemented the consent-gated Relay owner-client flow and Room-scoped background feedback watcher, removed the duplicated legacy Hermes Web viewer, and fixed successful consent-operation replay so an identical fixed operation returns its private cached safe payload without repeating preflight, publication, or Room creation. The idempotency key is derived from the resolved artifact, exact revision, question, audience, media type, sensitivity, normalized endpoint, and private output locations; changed facts therefore cannot borrow an earlier success. No live Relay publication, runtime change, push, PR, merge, release, or deploy occurred.
-
-### Checklist
-
-- DONE: One explicit-consent operation now performs fail-closed capability preflight, immutable Briefing create/verify/package/publish, and Room creation, returning only validated `room_url` and authoritative normalized `expires_at`; identical successful replay uses `0600` private operation state and makes zero additional network calls.
-- DONE: The Room-scoped watcher runs in the background, persists Result-ID cursor state, owner-pulls and exact-byte verifies feedback-only Results against Room/Briefing/artifact/digests, emits only one safe advisory event to the dispatch-bound Slack origin, never advances workflow state, and supports Room-disabled, Briefing-expired, explicit-stop, and first-valid-feedback termination.
-- DONE: Removed the legacy `web/` viewer, `bin/subspace-relay-web`, and related tests/prototype while preserving Hermes plugin/owner-client tools and documentation; focused and full verification pass without network publication or runtime side effects.
 
 ### Verification evidence
 
