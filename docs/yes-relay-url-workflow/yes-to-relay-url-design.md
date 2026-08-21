@@ -1,7 +1,7 @@
 ---
 id: pj0cksg00ebxtyvbaabv2kdz
 title: Yes to Relay URL design
-status: implementation
+status: validation
 source: Captain commission resolution
 started: 2026-08-21T07:42:39Z
 completed:
