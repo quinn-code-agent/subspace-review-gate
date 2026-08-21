@@ -356,6 +356,14 @@ class RelayFeedbackWatcherTests(unittest.TestCase):
             self.assertTrue(first["ready"])
             self.assertEqual(second["pid"], first["pid"])
             self.assertTrue(second["reused"])
+            process_path = (self.state / "watchers" / "processes" /
+                            f"{plugin._watcher_ref(self.briefing_id, self.room_ref)}.json")
+            process_record = json.loads(process_path.read_text())
+            identity = process_record["process_identity"]
+            self.assertEqual(identity["argv"][0], identity["executable"])
+            self.assertEqual(identity["fingerprint"], hashlib.sha256(json.dumps(
+                {"executable": identity["executable"], "argv": identity["argv"]},
+                sort_keys=True, separators=(",", ":")).encode()).hexdigest())
             rebound = json.loads(plugin.relay_watch_feedback({**args, "origin_thread": "9.9"}))
             self.assertFalse(rebound["ok"])
             stopped = json.loads(plugin.relay_stop_feedback_watch({"briefing": self.briefing_id,
@@ -367,6 +375,49 @@ class RelayFeedbackWatcherTests(unittest.TestCase):
             for pid in set(pids):
                 try: os.kill(pid, 15)
                 except ProcessLookupError: pass
+
+    def test_forged_extra_argv_and_reused_pid_are_never_signalled(self):
+        plugin = load_plugin()
+        binding = {"briefing": self.briefing_id, "room_ref": self.room_ref,
+                   "origin_channel": "C123", "origin_thread": "1.2",
+                   "outbox": str((self.root / "outbox").resolve()),
+                   "state_dir": str(self.state.resolve()), "first_valid": False, "interval": 0.05}
+        ready_file = str(self.root / "forged-ready.json")
+        token = "f" * 64
+        expected_command = plugin._watcher_command(binding, ready_file, token)
+        expected_identity = {"executable": expected_command[0], "argv": expected_command,
+                             "fingerprint": plugin._process_identity_fingerprint(
+                                 expected_command[0], expected_command)}
+        # Simulate PID reuse: the durable record names the canonical watcher, but
+        # the live PID now runs unrelated code with that command appended inertly.
+        forged = subprocess.Popen([expected_command[0], "-c", "import time; time.sleep(30)",
+                                   *expected_command[1:]])
+        watcher_ref = plugin._watcher_ref(self.briefing_id, self.room_ref)
+        process_path = self.state / "watchers" / "processes" / f"{watcher_ref}.json"
+        process_path.parent.mkdir(parents=True)
+        record = {"version": 2, "watcher_ref": watcher_ref, "pid": forged.pid,
+                  "binding": binding, "watcher_token": token, "ready_file": ready_file,
+                  "process_identity": expected_identity}
+        process_path.write_text(json.dumps(record)); os.chmod(process_path, 0o600)
+        try:
+            restart = json.loads(plugin.relay_watch_feedback({
+                "briefing": self.briefing_id, "room_ref": self.room_ref,
+                "origin_channel": binding["origin_channel"], "origin_thread": binding["origin_thread"],
+                "outbox": binding["outbox"], "state_dir": binding["state_dir"],
+                "interval": binding["interval"]}))
+            self.assertFalse(restart["ok"])
+            self.assertIn("live PID identity cannot be proven", restart["error"])
+            self.assertIsNone(forged.poll())
+            stopped = json.loads(plugin.relay_stop_feedback_watch({
+                "briefing": self.briefing_id, "room_ref": self.room_ref,
+                "state_dir": str(self.state)}))
+            self.assertFalse(stopped["shutdown_verified"])
+            self.assertIn("no signal was sent", stopped["error"])
+            self.assertIsNone(forged.poll(), "forged extra-argv process received a signal")
+        finally:
+            if forged.poll() is None:
+                forged.terminate()
+            forged.wait(timeout=2)
 
     def test_watcher_ignores_result_without_matching_room_and_does_not_advance_cursor(self):
         class Handler(BaseHTTPRequestHandler):

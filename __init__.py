@@ -1,12 +1,14 @@
 """Hermes plugin registration for Subspace Review & Gate v1 helpers."""
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import hashlib
 import json
 import os
 import fcntl
-import shlex
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -189,40 +191,81 @@ def _watcher_ref(briefing, room_ref):
     return "watcher_" + hashlib.sha256(f"{briefing}\0{room_ref}".encode()).hexdigest()[:20]
 
 
+def _process_identity_fingerprint(executable, argv):
+    payload = json.dumps({"executable": executable, "argv": argv}, sort_keys=True,
+                         separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _live_process_identity(pid):
+    """Return the kernel-reported executable and exact argv boundaries."""
+    if sys.platform == "darwin":
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2, pid
+        size = ctypes.c_size_t()
+        if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
+            raise OSError(ctypes.get_errno(), "unable to read process arguments")
+        buffer = ctypes.create_string_buffer(size.value)
+        if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
+            raise OSError(ctypes.get_errno(), "unable to read process arguments")
+        data = buffer.raw[:size.value]
+        argc = struct.unpack_from("=i", data)[0]
+        offset = struct.calcsize("=i")
+        end = data.index(b"\0", offset)
+        executable = os.fsdecode(data[offset:end])
+        offset = end
+        while offset < len(data) and data[offset] == 0:
+            offset += 1
+        argv = []
+        for _ in range(argc):
+            end = data.index(b"\0", offset)
+            argv.append(os.fsdecode(data[offset:end]))
+            offset = end + 1
+    elif sys.platform.startswith("linux"):
+        executable = os.readlink(f"/proc/{pid}/exe")
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        argv = [os.fsdecode(item) for item in raw.rstrip(b"\0").split(b"\0")]
+    else:
+        raise OSError("exact process identity is unsupported on this platform")
+    if not executable or not argv:
+        raise OSError("process identity was incomplete")
+    return {"executable": executable, "argv": argv,
+            "fingerprint": _process_identity_fingerprint(executable, argv)}
+
+
+def _watcher_command(binding, ready_file, token):
+    executable = _live_process_identity(os.getpid())["executable"]
+    command = [
+        executable, str(ROOT / "bin" / "subspace-review-relay"), "watch-feedback",
+        "--briefing", binding["briefing"], "--room-ref", binding["room_ref"],
+        "--origin-channel", binding["origin_channel"], "--origin-thread", binding["origin_thread"],
+        "--outbox", binding["outbox"], "--state-dir", binding["state_dir"],
+        "--interval", str(binding["interval"]), "--ready-file", ready_file,
+        "--watcher-token", token,
+    ]
+    if binding["first_valid"]:
+        command.append("--first-valid")
+    return command
+
+
 def _pid_is_watcher(record):
     pid = record.get("pid")
-    binding = record.get("binding")
-    token = record.get("watcher_token")
-    ready_file = record.get("ready_file")
-    if not isinstance(pid, int) or not isinstance(binding, dict) or not isinstance(token, str) or not isinstance(ready_file, str):
+    expected = record.get("process_identity")
+    if not isinstance(pid, int) or not isinstance(expected, dict):
+        return False
+    executable = expected.get("executable")
+    argv = expected.get("argv")
+    fingerprint = expected.get("fingerprint")
+    if (not isinstance(executable, str) or not isinstance(argv, list)
+            or not all(isinstance(item, str) for item in argv)
+            or fingerprint != _process_identity_fingerprint(executable, argv)):
         return False
     try:
         os.kill(pid, 0)
-        command = subprocess.run(["/bin/ps", "-ww", "-p", str(pid), "-o", "command="], text=True, capture_output=True, check=True).stdout
-        argv = shlex.split(command)
-    except (OSError, ValueError):
+        live = _live_process_identity(pid)
+    except (OSError, ValueError, IndexError, struct.error):
         return False
-    except (subprocess.SubprocessError, IndexError):
-        return False
-    expected = {
-        "--briefing": binding.get("briefing"), "--room-ref": binding.get("room_ref"),
-        "--origin-channel": binding.get("origin_channel"), "--origin-thread": binding.get("origin_thread"),
-        "--outbox": binding.get("outbox"), "--state-dir": binding.get("state_dir"),
-        "--ready-file": ready_file, "--watcher-token": token,
-    }
-    if str(ROOT / "bin" / "subspace-review-relay") not in argv or "watch-feedback" not in argv:
-        return False
-    for flag, value in expected.items():
-        try:
-            if argv[argv.index(flag) + 1] != value:
-                return False
-        except (ValueError, IndexError):
-            return False
-    try:
-        interval_matches = float(argv[argv.index("--interval") + 1]) == binding.get("interval")
-    except (ValueError, IndexError):
-        return False
-    return interval_matches and (("--first-valid" in argv) == binding.get("first_valid"))
+    return live == expected
 
 
 def _pid_exists(pid):
@@ -278,20 +321,17 @@ def relay_watch_feedback(args, **_):
             if isinstance(pid, int) and _pid_is_watcher(record):
                 return json.dumps({"ok": True, "watcher_ref": watcher_ref, "background": True,
                                    "pid": pid, "ready": True, "reused": True})
+            if _pid_exists(pid):
+                return json.dumps({"ok": False,
+                                   "error": "stored watcher live PID identity cannot be proven exactly; no watcher was started"})
             process_path.unlink(missing_ok=True); ready_path.unlink(missing_ok=True)
         ready_path.unlink(missing_ok=True)
         stop_path = state / "watchers" / args["briefing"] / f"{args['room_ref']}.stop"
         stop_path.unlink(missing_ok=True)
         watcher_token = hashlib.sha256(os.urandom(32)).hexdigest()
-        command = [
-            sys.executable, str(ROOT / "bin" / "subspace-review-relay"), "watch-feedback",
-            "--briefing", args["briefing"], "--room-ref", args["room_ref"],
-            "--origin-channel", args["origin_channel"], "--origin-thread", args["origin_thread"],
-            "--outbox", binding["outbox"], "--state-dir", str(state),
-            "--interval", str(binding["interval"]), "--ready-file", str(ready_path),
-            "--watcher-token", watcher_token,
-        ]
-        if binding["first_valid"]: command.append("--first-valid")
+        command = _watcher_command(binding, str(ready_path), watcher_token)
+        process_identity = {"executable": command[0], "argv": command,
+                            "fingerprint": _process_identity_fingerprint(command[0], command)}
         stdout_path = logs / f"{watcher_ref}.out"; stderr_path = logs / f"{watcher_ref}.err"
         stdout_fd = os.open(stdout_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         stderr_fd = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
@@ -302,8 +342,9 @@ def relay_watch_feedback(args, **_):
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and not ready_path.exists() and process.poll() is None:
             time.sleep(0.025)
-        record = {"version": 1, "watcher_ref": watcher_ref, "pid": process.pid, "binding": binding,
-                  "watcher_token": watcher_token, "ready_file": str(ready_path)}
+        record = {"version": 2, "watcher_ref": watcher_ref, "pid": process.pid, "binding": binding,
+                  "watcher_token": watcher_token, "ready_file": str(ready_path),
+                  "process_identity": process_identity}
         if not ready_path.exists() or process.poll() is not None:
             if process.poll() is None and _pid_is_watcher(record):
                 process.terminate(); process.wait(timeout=2)
