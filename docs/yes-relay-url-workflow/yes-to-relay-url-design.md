@@ -3,11 +3,11 @@ id: pj0cksg00ebxtyvbaabv2kdz
 title: Yes to Relay URL design
 status: ideation
 source: Captain commission resolution
-started:
+started: 2026-08-21T07:42:39Z
 completed:
 verdict:
 score: 1.0
-worktree:
+worktree: .worktrees/spacedock-ensign-yes-to-relay-url-design
 issue:
 pr:
 mod-block:
