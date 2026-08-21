@@ -2,14 +2,17 @@
 """Phase 1 Relay adapter: package a verified Briefing and normalize Web feedback."""
 import argparse
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import mimetypes
 import os
 import re
 import secrets
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -116,15 +119,37 @@ def owner_state_dir(value):
 
 
 def write_private_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n")
-    os.chmod(path, 0o600)
+    write_private_bytes(path, (json.dumps(data, indent=2) + "\n").encode())
 
 
 def write_private_bytes(path, data):
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-    os.chmod(path, 0o600)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try: os.close(fd)
+        except OSError: pass
+        try: os.unlink(temporary)
+        except OSError: pass
+        raise
+
+
+def load_private_json(path, label):
+    path = Path(path)
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        fail(f"invalid {label}: {exc}")
+    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
+        fail(f"{label} must be a regular file with private permissions (0600)")
+    return load_json(path, label)
 
 
 def base32_unpadded(byte_count):
@@ -159,7 +184,7 @@ def publish(args):
     ])
     request = urllib.request.Request(endpoint + "/api/briefing", data=body, method="POST", headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "X-Subspace-Device": device_id, "Authorization": f"Bearer {device_secret}", "Idempotency-Key": idempotency_key})
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with credentialed_urlopen(request, timeout=45) as response:
             response_data = json.loads(response.read())
     except urllib.error.HTTPError as exc:
         fail(f"Relay publish refused ({exc.code})")
@@ -176,13 +201,32 @@ def auth_headers(receipt):
     return {"X-Subspace-Device": receipt["deviceId"], "Authorization": f"Bearer {receipt['deviceSecret']}"}
 
 
+class RefuseCredentialRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.URLError("credential-bearing Relay redirect refused")
+
+
+def credentialed_urlopen(request, timeout):
+    parsed = urlparse(request.full_url)
+    loopback = parsed.hostname in {"127.0.0.1", "::1", "localhost"}
+    if parsed.scheme != "https" and not (parsed.scheme == "http" and loopback):
+        raise urllib.error.URLError("credential-bearing Relay request requires an exact HTTPS origin")
+    opener = urllib.request.build_opener(RefuseCredentialRedirects())
+    response = opener.open(request, timeout=timeout)
+    final = urlparse(response.geturl())
+    if (final.scheme, final.hostname, final.port) != (parsed.scheme, parsed.hostname, parsed.port):
+        response.close()
+        raise urllib.error.URLError("credential-bearing Relay response changed origin")
+    return response
+
+
 def load_owner_receipt(briefing_id, state_dir):
     if not BRIEFING_ID.fullmatch(briefing_id):
         fail("owner operation requires Briefing id briefing:<32 lowercase hex>")
     receipt_path = owner_state_dir(state_dir) / "owners" / f"{briefing_id}.json"
     if not receipt_path.exists():
         fail("owner receipt is required for Relay Room control")
-    receipt = load_json(receipt_path, "owner receipt")
+    receipt = load_private_json(receipt_path, "owner receipt")
     if receipt.get("briefing") != briefing_id:
         fail("owner receipt does not belong to the requested Briefing")
     if not isinstance(receipt.get("deviceId"), str) or not isinstance(receipt.get("deviceSecret"), str):
@@ -210,7 +254,7 @@ def load_room_record(briefing_id, state_dir, reference):
     record_path = room_record_path(briefing_id, state_dir, reference)
     if not record_path.exists():
         fail("private Room reference is not available")
-    record = load_json(record_path, "private Room record")
+    record = load_private_json(record_path, "private Room record")
     if record.get("briefing") != briefing_id:
         fail("private Room record does not belong to the requested Briefing")
     room_id = room_identifier(record.get("roomId"), "Room id")
@@ -230,6 +274,14 @@ def rfc3339_timestamp(value, label):
     return parsed.astimezone(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def future_rfc3339_timestamp(value, label="expiresAt"):
+    normalized = rfc3339_timestamp(value, label)
+    parsed = dt.datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    if parsed <= dt.datetime.now(dt.timezone.utc):
+        fail(f"Relay Room control did not return a valid future {label}")
+    return normalized
+
+
 def owner_post(endpoint, path, receipt, body=None):
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode()
     headers = {**auth_headers(receipt), "Accept": "application/json"}
@@ -237,7 +289,7 @@ def owner_post(endpoint, path, receipt, body=None):
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(endpoint.rstrip("/") + path, data=data, method="POST", headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with credentialed_urlopen(request, timeout=45) as response:
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
         fail(f"Relay Room control refused ({exc.code})")
@@ -261,7 +313,7 @@ def create_room(args):
     if "roomUrl" in payload or "expiresAt" in payload:
         capability = {
             "roomUrl": safe_room_url(payload.get("roomUrl")),
-            "expiresAt": rfc3339_timestamp(payload.get("expiresAt"), "expiresAt"),
+            "expiresAt": future_rfc3339_timestamp(payload.get("expiresAt")),
         }
     reference = "roomref_" + base32_unpadded(16)
     write_private_json(room_record_path(args.briefing, args.state_dir, reference), {"version": 1, "briefing": args.briefing, "endpoint": endpoint, "origin": origin, "roomId": room_id, **capability})
@@ -274,7 +326,7 @@ def disable_room(args):
     payload = owner_post(endpoint, f"/api/room/{room_id}/disable", receipt)
     disabled_at = rfc3339_timestamp(payload.get("disabledAt"), "disabledAt")
     record_path = room_record_path(args.briefing, args.state_dir, args.room_ref)
-    record = load_json(record_path, "private Room record")
+    record = load_private_json(record_path, "private Room record")
     record["disabledAt"] = disabled_at
     write_private_json(record_path, record)
     print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "disabled_at": disabled_at}, indent=2))
@@ -297,11 +349,11 @@ def owner_results(args):
     receipt_path = state / "owners" / f"{briefing_id}.json"
     if not receipt_path.exists():
         fail("owner receipt is required to pull Relay Results")
-    receipt = load_json(receipt_path, "owner receipt")
+    receipt = load_private_json(receipt_path, "owner receipt")
     endpoint = args.endpoint.rstrip("/")
     request = urllib.request.Request(endpoint + f"/api/briefing/{briefing_id}/results", headers=auth_headers(receipt))
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with credentialed_urlopen(request, timeout=45) as response:
             payload = json.loads(response.read())
     except urllib.error.HTTPError as exc:
         fail(f"Relay Results pull refused ({exc.code})")
@@ -333,7 +385,7 @@ def pull_result(args):
         fail("valid Briefing and Result ids are required")
     state = owner_state_dir(args.state_dir); receipt_path = state / "owners" / f"{briefing_id}.json"
     if not receipt_path.exists(): fail("owner receipt is required to pull Relay Results")
-    receipt = load_json(receipt_path, "owner receipt"); endpoint = args.endpoint.rstrip("/")
+    receipt = load_private_json(receipt_path, "owner receipt"); endpoint = args.endpoint.rstrip("/")
     headers = auth_headers(receipt)
     review = fetch_bytes_request(endpoint + f"/api/briefing/{briefing_id}/result/{result_id}/review.jsonl", headers)
     result = fetch_bytes_request(endpoint + f"/api/briefing/{briefing_id}/result/{result_id}/result.json", headers)
@@ -347,7 +399,7 @@ def pull_result(args):
 
 def fetch_bytes_request(url, headers):
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=45) as response: return response.read()
+        with credentialed_urlopen(urllib.request.Request(url, headers=headers), timeout=45) as response: return response.read()
     except urllib.error.HTTPError as exc: fail(f"Relay Result pull refused ({exc.code})")
     except OSError as exc: fail(f"Relay Result pull failed: {exc}")
 
@@ -385,7 +437,7 @@ def submit(args):
     boundary, body = multipart_body([("review", review, "review.jsonl", "application/jsonl"), ("result", result, "result.json", "application/json")])
     request = urllib.request.Request(endpoint + f"/api/briefing/{briefing_id}/result", data=body, method="POST", headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "X-Subspace-Device": receipt["deviceId"], "Authorization": f"Bearer {receipt['deviceSecret']}", "Idempotency-Key": receipt["idempotencyKey"]})
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with credentialed_urlopen(request, timeout=45) as response:
             response_data = json.loads(response.read())
     except urllib.error.HTTPError as exc:
         fail(f"Relay Result submit refused ({exc.code})")
@@ -531,7 +583,7 @@ def safe_room_url(value):
 def owner_get_json(endpoint, path, receipt, label):
     request = urllib.request.Request(endpoint.rstrip("/") + path, headers={**auth_headers(receipt), "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with credentialed_urlopen(request, timeout=45) as response:
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
         fail(f"{label} refused ({exc.code})")
@@ -620,11 +672,11 @@ def share_consented(args):
     operation_identity = consent_operation_identity(args, artifact, initial_revision)
     operation_path = consent_operation_path(args.state_dir, operation_identity)
     if operation_path.exists():
-        operation = load_json(operation_path, "private consent operation")
+        operation = load_private_json(operation_path, "private consent operation")
         if operation.get("version") != 1 or operation.get("identity") != operation_identity:
             fail("private consent operation state does not match this request; no network action was taken")
         room_url = safe_room_url(operation.get("roomUrl"))
-        expires_at = rfc3339_timestamp(operation.get("expiresAt"), "expiresAt")
+        expires_at = future_rfc3339_timestamp(operation.get("expiresAt"))
         print(json.dumps({"ok": True, "room_url": room_url, "expires_at": expires_at}, indent=2))
         return
     briefing = Path(args.briefing).resolve()
@@ -655,9 +707,9 @@ def share_consented(args):
     reference = room_output.get("room_ref")
     if not isinstance(reference, str):
         fail("Relay Room creation returned no private reference; no shareable URL was produced")
-    record = load_json(room_record_path(briefing_id, args.state_dir, reference), "private Room record")
+    record = load_private_json(room_record_path(briefing_id, args.state_dir, reference), "private Room record")
     room_url = safe_room_url(record.get("roomUrl"))
-    expires_at = rfc3339_timestamp(record.get("expiresAt"), "expiresAt")
+    expires_at = future_rfc3339_timestamp(record.get("expiresAt"))
     write_private_json(operation_path, {
         "version": 1,
         "identity": operation_identity,
@@ -675,7 +727,7 @@ def valid_digest(value):
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
-def parse_feedback_bytes(review_bytes, result_bytes, briefing, summary):
+def parse_feedback_bytes(review_bytes, result_bytes, briefing, summary, listed_result_id):
     if sha256_bytes(review_bytes) != summary.get("reviewSha256") or sha256_bytes(result_bytes) != summary.get("resultSha256"):
         fail("Relay feedback bytes do not match the owner Result digests")
     try:
@@ -685,19 +737,66 @@ def parse_feedback_bytes(review_bytes, result_bytes, briefing, summary):
         fail("Relay feedback bytes are not valid Review v1 JSON")
     expected_artifact = briefing["artifacts"][0]
     if (
-        result.get("type") != "review-v1-result"
+        result.get("id") != listed_result_id
+        or result.get("type") != "review-v1-result"
         or result.get("mode") != "feedback"
         or result.get("briefing") != briefing.get("id")
         or result.get("artifact") != {key: expected_artifact[key] for key in ("id", "uri", "mediaType", "rev")}
         or result.get("annotations") != annotations
     ):
+        if result.get("id") != listed_result_id:
+            fail("pulled Result identity does not match the listed Result identity")
         fail("pulled Result does not exactly match this feedback-only Briefing and artifact")
+
+
+def watcher_binding(args):
+    return {
+        "origin": {"channel": args.origin_channel, "thread": args.origin_thread},
+        "outbox": str(Path(args.outbox).expanduser().resolve()),
+    }
+
+
+def load_or_create_watcher_cursor(args, cursor_path):
+    binding = watcher_binding(args)
+    if cursor_path.exists():
+        cursor = load_private_json(cursor_path, "feedback watcher cursor")
+        if cursor.get("version") != 1 or cursor.get("origin") != binding["origin"] or cursor.get("outbox") != binding["outbox"]:
+            fail("feedback watcher binding is immutable; origin thread and outbox rebinding refused")
+        if not isinstance(cursor.get("processedResultIds"), list):
+            fail("feedback watcher cursor is invalid")
+        return cursor
+    cursor = {"version": 1, "processedResultIds": [], **binding}
+    write_private_json(cursor_path, cursor)
+    return cursor
+
+
+def append_outbox_event_once(path, event):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a+") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
+            fail("feedback outbox must be a regular file with private permissions (0600)")
+        stream.seek(0)
+        for line in stream:
+            try:
+                if json.loads(line).get("event_id") == event["event_id"]:
+                    return False
+            except json.JSONDecodeError:
+                fail("feedback outbox contains invalid JSON")
+        stream.seek(0, os.SEEK_END)
+        stream.write(json.dumps(event, separators=(",", ":")) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    return True
 
 
 def watch_feedback_once(args, emit=True):
     receipt = load_owner_receipt(args.briefing, args.state_dir)
     record_path = room_record_path(args.briefing, args.state_dir, args.room_ref)
-    room = load_json(record_path, "private Room record")
+    room = load_private_json(record_path, "private Room record")
     if room.get("briefing") != args.briefing:
         fail("private Room record belongs to another Briefing")
     if room.get("disabledAt"):
@@ -715,7 +814,7 @@ def watch_feedback_once(args, emit=True):
         output = {"ok": True, "delivered": 0, "stopped": "user-stop"}
         if emit: print(json.dumps(output))
         return output
-    cursor = load_json(cursor_path, "feedback watcher cursor") if cursor_path.exists() else {"version": 1, "processedResultIds": []}
+    cursor = load_or_create_watcher_cursor(args, cursor_path)
     processed = set(cursor.get("processedResultIds", []))
     endpoint = room.get("endpoint")
     payload = owner_get_json(endpoint, f"/api/briefing/{args.briefing}/results", receipt, "Relay feedback watch")
@@ -741,21 +840,20 @@ def watch_feedback_once(args, emit=True):
         headers = auth_headers(receipt)
         review_bytes = fetch_bytes_request(endpoint.rstrip("/") + f"/api/briefing/{args.briefing}/result/{result_id}/review.jsonl", headers)
         result_bytes = fetch_bytes_request(endpoint.rstrip("/") + f"/api/briefing/{args.briefing}/result/{result_id}/result.json", headers)
-        parse_feedback_bytes(review_bytes, result_bytes, briefing, summary)
+        parse_feedback_bytes(review_bytes, result_bytes, briefing, summary, result_id)
         pulled = owner_state_dir(args.state_dir) / "results" / args.briefing / result_id
         write_private_bytes(pulled / "review.jsonl", review_bytes)
         write_private_bytes(pulled / "result.json", result_bytes)
         event = {
             "type": "relay-feedback-received/v1", "event_id": f"relay-feedback:{result_id}",
-            "origin": {"channel": args.origin_channel, "thread": args.origin_thread},
+            "origin": cursor["origin"],
             "message": "Relay feedback received for the fixed review artifact. Feedback is advisory; no workflow state changed.",
         }
-        outbox = Path(args.outbox).resolve(); outbox.parent.mkdir(parents=True, exist_ok=True)
-        with outbox.open("a") as stream:
-            stream.write(json.dumps(event, separators=(",", ":")) + "\n")
-        os.chmod(outbox, 0o600)
-        processed.add(result_id); delivered += 1
-        cursor.update({"processedResultIds": sorted(processed), "origin": event["origin"]})
+        appended = append_outbox_event_once(cursor["outbox"], event)
+        processed.add(result_id)
+        if appended:
+            delivered += 1
+        cursor["processedResultIds"] = sorted(processed)
         write_private_json(cursor_path, cursor)
         if args.first_valid:
             break
@@ -764,7 +862,38 @@ def watch_feedback_once(args, emit=True):
     return output
 
 
+def prepare_feedback_watch(args):
+    """Validate all private watcher state without making a Relay request."""
+    load_owner_receipt(args.briefing, args.state_dir)
+    room = load_private_json(room_record_path(args.briefing, args.state_dir, args.room_ref), "private Room record")
+    if room.get("briefing") != args.briefing:
+        fail("private Room record belongs to another Briefing")
+    if room.get("disabledAt"):
+        return {"ok": True, "delivered": 0, "stopped": "room-disabled"}
+    expires_at = room.get("expiresAt")
+    if expires_at and dt.datetime.now(dt.timezone.utc) >= dt.datetime.fromisoformat(expires_at.replace("Z", "+00:00")):
+        return {"ok": True, "delivered": 0, "stopped": "briefing-expired"}
+    cursor_path = watcher_cursor_path(args.briefing, args.state_dir, args.room_ref)
+    if cursor_path.with_suffix(".stop").exists():
+        return {"ok": True, "delivered": 0, "stopped": "user-stop"}
+    load_or_create_watcher_cursor(args, cursor_path)
+    return None
+
+
 def watch_feedback(args):
+    stopped = prepare_feedback_watch(args)
+    if stopped:
+        print(json.dumps(stopped))
+        return
+    if args.ready_file:
+        write_private_json(Path(args.ready_file), {
+            "version": 1,
+            "pid": os.getpid(),
+            "watcherToken": args.watcher_token,
+            "briefing": args.briefing,
+            "roomRef": args.room_ref,
+            "binding": watcher_binding(args),
+        })
     while True:
         output = watch_feedback_once(args, emit=False)
         if output.get("stopped"):
@@ -808,6 +937,7 @@ def main():
         watch_p.add_argument("--origin-channel", required=True); watch_p.add_argument("--origin-thread", required=True)
         watch_p.add_argument("--outbox", required=True); watch_p.add_argument("--state-dir", required=True)
         watch_p.add_argument("--first-valid", action="store_true"); watch_p.add_argument("--interval", type=float, default=15.0)
+        watch_p.add_argument("--ready-file"); watch_p.add_argument("--watcher-token")
         watch_p.set_defaults(fn=function)
     stop_p = commands.add_parser("stop-feedback-watch"); stop_p.add_argument("--briefing", required=True); stop_p.add_argument("--room-ref", required=True); stop_p.add_argument("--state-dir", required=True); stop_p.set_defaults(fn=stop_feedback_watch)
     args = parser.parse_args(); args.fn(args)

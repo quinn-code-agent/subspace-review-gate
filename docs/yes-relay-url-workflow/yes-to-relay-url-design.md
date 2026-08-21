@@ -187,3 +187,41 @@ REJECT. Candidate `07fcf30fb5acc8effd5f11cf41480cab0b2fe53d` is test-green and p
 ### Recommendation
 
 REJECT and return to implementation. Re-run the same focused/full/compile/diff gates plus red-capable adversarial tests for every blocking finding against the new exact candidate SHA. No push, PR, merge, release, deploy, runtime apply, or real Relay publication occurred.
+
+## Stage Report: implementation (cycle 2)
+- DONE: Fixed authoritative Room expiry handling and private state I/O: expired Room capabilities now refuse before caching, credential-bearing owner/Room/cursor/operation files require private regular-file state, and writes are atomic `0600` replacements.
+  Evidence for AC-1 and AC-2: `tests.test_relay_consent` passed all 11 tests, including expired authoritative expiry and mode-`0644` owner-state refusal; legacy compatibility fixtures now explicitly create only credential-bearing owner/Room records as `0600` without weakening production validation.
+- DONE: Fixed credentialed transport and immutable feedback identity/binding: credential-bearing redirects and origin changes refuse, listed and embedded Result IDs must match, persisted Slack origin/outbox bindings cannot be rebound, and crash-window replay deduplicates the durable event ID.
+  Evidence for AC-2 and AC-4: the redirect, Result-identity, cursor-rebinding, Room-scope, and outbox replay adversarial tests all passed in the 11-test consent suite.
+- DONE: Completed the watcher readiness contract: `watch-feedback` accepts `--ready-file`, validates private owner/Room/cursor and immutable binding state before polling, atomically writes a `0600` marker carrying PID plus nonce-bound identity, and the plugin waits for and validates that marker before returning `pid` and `ready`.
+  Evidence for AC-4 and AC-5: the focused lifecycle test passed 1/1; an identical start reused the same proven live PID, while a changed origin binding refused.
+- DONE: Completed durable safe stop: the plugin persists the explicit user-stop marker, loads and validates the private durable process record, proves the full CLI binding and nonce before any signal, waits for actual process exit, removes live-process/readiness state only after shutdown, and reports `shutdown_verified` only from verified exit rather than marker existence.
+  Evidence for AC-4 and AC-5: the focused lifecycle test passed 1/1, asserted `shutdown_verified`, and independently observed `ProcessLookupError` for the stopped PID; the durable `.stop` marker leaves subsequent watcher state as `user-stop`.
+- DONE: Preserved the Hermes owner-client repository boundary and compatibility while completing cycle 2 locally.
+  Evidence for AC-3 and AC-5: `tests.test_relay` passed 14/14, full discovery passed 56/56, compilation and diff hygiene passed, and no removed Web viewer or runtime/publication surface was restored.
+
+### Summary
+
+Cycle 2 closes the five validation findings: future authoritative expiry, atomic/private secret state, exact Result identity, immutable watcher origin/outbox binding with durable dedupe, and readiness/idempotent-start/verified-stop lifecycle. No push, PR, merge, release, deploy, runtime apply, or real Relay publication occurred.
+
+### Commands and results
+
+- `python3 -m unittest tests.test_relay_consent.RelayFeedbackWatcherTests.test_background_watcher_start_is_ready_idempotent_and_stop_is_verified -v` — PASS, 1 test.
+- `python3 -m unittest tests.test_relay_consent -v` — PASS, 11 tests.
+- `python3 -m unittest tests.test_relay -v` — PASS, 14 tests.
+- `python3 -m unittest discover -s tests -v` — PASS, 56 tests.
+- `python3 -m py_compile __init__.py bin/subspace-review-gate bin/subspace-review-relay bin/subspace-review-runtime tests/test_relay.py tests/test_relay_consent.py` — PASS.
+- `git diff --check` — PASS.
+
+### Findings fixed
+
+1. Expired authoritative `expiresAt` values could be returned/cached; they now fail closed and replay revalidates future expiry.
+2. Credential-bearing state could be read at mode `0644` and writes used chmod-after-write; reads now enforce private regular files and production writes use atomic mode-`0600` replacement.
+3. Pulled feedback could borrow a listed Result ID while embedding another ID; exact listed/embedded identity is now required.
+4. Persisted watcher origin/outbox state could be rebound and outbox-before-cursor replay could duplicate delivery; binding is immutable and event append is durably deduplicated.
+5. Background start lacked readiness, durable process identity, reuse, and verified shutdown; readiness and process records now bind the full watcher arguments plus nonce, identical live starts reuse one PID, changed binding refuses, and stop is verified by process exit rather than marker alone.
+6. Credentialed `urllib` calls could follow redirects or change origin; the exact credentialed origin is pinned and redirects refuse.
+
+### Residuals
+
+No blocking residual remains within cycle-2 watcher lifecycle or legacy fixture compatibility scope. Stop without a durable process record deliberately returns `shutdown_verified: false`; an unproven or PID-reused process is never signalled. Remote and runtime operations remain explicitly unperformed.
