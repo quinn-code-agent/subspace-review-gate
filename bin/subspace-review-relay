@@ -3,12 +3,17 @@
 import argparse
 import datetime as dt
 import hashlib
+import html as html_lib
 import json
 import os
 import re
 import secrets
+import stat
 import sys
+import tempfile
+import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -108,13 +113,62 @@ def load_package(package_dir):
 
 
 def owner_state_dir(value):
-    return Path(value).expanduser().resolve() if value else Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "subspace-review-gate" / "relay"
+    return Path(value).expanduser().absolute() if value else Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "subspace-review-gate" / "relay"
+
+
+def ensure_private_directory(path, create=False):
+    path = Path(path)
+    if create and not os.path.lexists(path):
+        missing = []
+        current = path
+        while not os.path.lexists(current):
+            missing.append(current)
+            current = current.parent
+        if current.is_symlink():
+            fail("private owner state path must not traverse a symlink during creation")
+        for directory in reversed(missing):
+            if directory.parent.is_symlink():
+                fail("private owner state path must not traverse a symlink during creation")
+            os.mkdir(directory, 0o700)
+    try:
+        info = path.lstat()
+    except OSError:
+        fail("private owner state directory is not available")
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        fail("private owner state must use regular directories, not symlinks")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        fail("private owner state must be owned by the current user")
+    if info.st_mode & 0o077:
+        fail("private owner state directory permissions must be 0700")
+    return path
 
 
 def write_private_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n")
-    os.chmod(path, 0o600)
+    path = Path(path)
+    ensure_private_directory(path.parent, create=True)
+    if path.exists():
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            fail("private owner state file must be a regular file, not a symlink")
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as temporary:
+            temporary.write(json.dumps(data, indent=2) + "\n")
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_name, path)
+        os.chmod(path, 0o600)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary_name)
+        except OSError:
+            pass
+        raise
 
 
 def base32_unpadded(byte_count):
@@ -124,7 +178,7 @@ def base32_unpadded(byte_count):
 
 def publish(args):
     root, manifest_bytes, briefing_bytes, artifact, file, briefing = load_package(args.package)
-    state = owner_state_dir(args.state_dir)
+    state = ensure_private_directory(owner_state_dir(args.state_dir), create=True)
     device_id = "dev_" + base32_unpadded(16)
     device_secret = "sec_" + base32_unpadded(32)
     idempotency_key = str(uuid.uuid4())
@@ -166,17 +220,60 @@ def auth_headers(receipt):
     return {"X-Subspace-Device": receipt["deviceId"], "Authorization": f"Bearer {receipt['deviceSecret']}"}
 
 
+def owner_origin(value):
+    if not isinstance(value, str):
+        fail("owner receipt has no Relay endpoint")
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        fail("owner receipt has no valid Relay origin")
+    host = parsed.hostname.lower()
+    if parsed.scheme != "https" and host not in ("127.0.0.1", "::1", "localhost"):
+        fail("owner Relay origin must use HTTPS except for loopback local use")
+    try:
+        port = parsed.port
+    except ValueError:
+        fail("owner receipt has no valid Relay origin")
+    host_port = f"[{host}]" if ":" in host else host
+    if port is not None:
+        host_port += f":{port}"
+    return f"{parsed.scheme}://{host_port}"
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+OWNER_OPENER = urllib.request.build_opener(NoRedirectHandler)
+
+
 def load_owner_receipt(briefing_id, state_dir):
     if not BRIEFING_ID.fullmatch(briefing_id):
         fail("owner operation requires Briefing id briefing:<32 lowercase hex>")
-    receipt_path = owner_state_dir(state_dir) / "owners" / f"{briefing_id}.json"
+    state = ensure_private_directory(owner_state_dir(state_dir))
+    owners = ensure_private_directory(state / "owners")
+    receipt_path = owners / f"{briefing_id}.json"
     if not receipt_path.exists():
         fail("owner receipt is required for Relay Room control")
+    try:
+        receipt_mode = receipt_path.lstat().st_mode
+    except OSError:
+        fail("owner receipt is not available")
+    if stat.S_ISLNK(receipt_mode) or not stat.S_ISREG(receipt_mode):
+        fail("owner receipt must be a private regular file")
+    receipt_info = receipt_path.lstat()
+    if hasattr(os, "getuid") and receipt_info.st_uid != os.getuid():
+        fail("owner receipt must be owned by the current user")
+    if receipt_info.st_nlink != 1 or receipt_info.st_mode & 0o077:
+        fail("owner receipt permissions must be 0600 with one link")
     receipt = load_json(receipt_path, "owner receipt")
     if receipt.get("briefing") != briefing_id:
         fail("owner receipt does not belong to the requested Briefing")
-    if not isinstance(receipt.get("deviceId"), str) or not isinstance(receipt.get("deviceSecret"), str):
+    if not isinstance(receipt.get("deviceId"), str) or not re.fullmatch(r"dev_[a-z2-7]{26}", receipt["deviceId"]):
         fail("owner receipt has no usable device credentials")
+    if not isinstance(receipt.get("deviceSecret"), str) or not re.fullmatch(r"sec_[a-z2-7]{52}", receipt["deviceSecret"]):
+        fail("owner receipt has no usable device credentials")
+    receipt["endpoint"] = owner_origin(receipt.get("endpoint"))
     return receipt
 
 
@@ -221,14 +318,19 @@ def rfc3339_timestamp(value, label):
 
 
 def owner_post(endpoint, path, receipt, body=None):
+    if owner_origin(endpoint) != receipt["endpoint"]:
+        fail("owner request origin differs from private receipt")
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode()
     headers = {**auth_headers(receipt), "Accept": "application/json"}
     if data is not None:
         headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(endpoint.rstrip("/") + path, data=data, method="POST", headers=headers)
+    request = urllib.request.Request(receipt["endpoint"] + path, data=data, method="POST", headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
-            return json.loads(response.read())
+        with OWNER_OPENER.open(request, timeout=45) as response:
+            raw_payload = response.read(256_001)
+        if len(raw_payload) > 256_000:
+            fail("Relay Room control response exceeds the size limit")
+        return json.loads(raw_payload)
     except urllib.error.HTTPError as exc:
         fail(f"Relay Room control refused ({exc.code})")
     except OSError as exc:
@@ -239,9 +341,7 @@ def owner_post(endpoint, path, receipt, body=None):
 
 def create_room(args):
     receipt = load_owner_receipt(args.briefing, args.state_dir)
-    endpoint = args.endpoint.rstrip("/") if args.endpoint else receipt.get("endpoint", "").rstrip("/")
-    if not endpoint:
-        fail("owner receipt has no Relay endpoint")
+    endpoint = receipt["endpoint"]
     payload = owner_post(endpoint, "/api/room", receipt, {"briefingId": args.briefing})
     room_id = room_identifier(payload.get("roomId"), "Room id")
     origin = payload.get("origin")
@@ -254,17 +354,21 @@ def create_room(args):
 
 def disable_room(args):
     receipt = load_owner_receipt(args.briefing, args.state_dir)
-    room_id, endpoint = load_room_record(args.briefing, args.state_dir, args.room_ref)
-    payload = owner_post(endpoint, f"/api/room/{room_id}/disable", receipt)
+    room_id, recorded_endpoint = load_room_record(args.briefing, args.state_dir, args.room_ref)
+    if owner_origin(recorded_endpoint) != receipt["endpoint"]:
+        fail("private Room record origin differs from owner receipt")
+    payload = owner_post(receipt["endpoint"], f"/api/room/{room_id}/disable", receipt)
     disabled_at = rfc3339_timestamp(payload.get("disabledAt"), "disabledAt")
     print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "disabled_at": disabled_at}, indent=2))
 
 
 def revoke_room_session(args):
     receipt = load_owner_receipt(args.briefing, args.state_dir)
-    room_id, endpoint = load_room_record(args.briefing, args.state_dir, args.room_ref)
+    room_id, recorded_endpoint = load_room_record(args.briefing, args.state_dir, args.room_ref)
+    if owner_origin(recorded_endpoint) != receipt["endpoint"]:
+        fail("private Room record origin differs from owner receipt")
     session_id = room_identifier(args.session_id, "session id")
-    payload = owner_post(endpoint, f"/api/room/{room_id}/session/{session_id}/revoke", receipt)
+    payload = owner_post(receipt["endpoint"], f"/api/room/{room_id}/session/{session_id}/revoke", receipt)
     revoked_at = rfc3339_timestamp(payload.get("revokedAt"), "revokedAt")
     print(json.dumps({"ok": True, "briefing": args.briefing, "room_ref": args.room_ref, "revoked_at": revoked_at}, indent=2))
 
@@ -273,63 +377,349 @@ def owner_results(args):
     briefing_id = args.briefing
     if not BRIEFING_ID.fullmatch(briefing_id):
         fail("Relay results requires Briefing id briefing:<32 lowercase hex>")
-    state = owner_state_dir(args.state_dir)
-    receipt_path = state / "owners" / f"{briefing_id}.json"
-    if not receipt_path.exists():
-        fail("owner receipt is required to pull Relay Results")
-    receipt = load_json(receipt_path, "owner receipt")
-    endpoint = args.endpoint.rstrip("/")
+    receipt = load_owner_receipt(briefing_id, args.state_dir)
+    endpoint = receipt["endpoint"]
     request = urllib.request.Request(endpoint + f"/api/briefing/{briefing_id}/results", headers=auth_headers(receipt))
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
-            payload = json.loads(response.read())
+        with OWNER_OPENER.open(request, timeout=45) as response:
+            raw_payload = response.read(256_001)
+        if len(raw_payload) > 256_000:
+            fail("Relay Results list exceeds the size limit")
+        payload = json.loads(raw_payload)
     except urllib.error.HTTPError as exc:
         fail(f"Relay Results pull refused ({exc.code})")
     except OSError as exc:
         fail(f"Relay Results pull failed: {exc}")
-    results = payload.get("results", [])
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("Relay Results pull returned invalid JSON")
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        fail("Relay Results pull returned an invalid Result list")
+    results = payload["results"]
+    if len(results) > 100:
+        fail("Relay Results list exceeds the count limit")
+    if "listStale" in payload and not isinstance(payload["listStale"], bool):
+        fail("Relay Results pull returned an invalid stale marker")
     operator_summaries = []
-    if isinstance(results, list):
-        for result in results:
-            if not isinstance(result, dict):
-                continue
-            result_id = result.get("resultId")
-            if not isinstance(result_id, str) or not re.fullmatch(r"res_[a-z2-7]{26}", result_id):
-                result_id = None
-            raw_actor = result.get("actor")
-            raw_participant = result.get("participant")
-            claimed_name = raw_actor if isinstance(raw_actor, str) and re.fullmatch(r"person:[a-z0-9._@-]{1,128}", raw_actor) else None
-            participant = raw_participant if isinstance(raw_participant, str) and re.fullmatch(r"par_[a-z2-7]{26}", raw_participant) else None
-            attribution = (claimed_name or "unknown claimed name") + " (self-declared)"
-            if participant:
-                attribution += " · " + participant
-            operator_summaries.append({"result_id": result_id, "claimed_name": claimed_name, "participant": participant, "attribution": attribution})
-    print(json.dumps({"ok": True, "briefing": briefing_id, "result_count": len(results) if isinstance(results, list) else 0, "operator_summaries": operator_summaries, "listStale": payload.get("listStale") is True}, indent=2))
+    seen_result_ids = set()
+    for result in results:
+        if not isinstance(result, dict):
+            fail("Relay Results pull returned an invalid Result summary")
+        result_id = result.get("resultId")
+        if not isinstance(result_id, str) or not re.fullmatch(r"res_[a-z2-7]{26}", result_id) or result_id in seen_result_ids:
+            fail("Relay Results pull returned an invalid or duplicate Result id")
+        seen_result_ids.add(result_id)
+        raw_actor = result.get("actor")
+        raw_participant = result.get("participant")
+        attribution_available = isinstance(raw_actor, str) and raw_actor.startswith("person:") and bool(raw_actor.removeprefix("person:").strip())
+        participant = raw_participant if isinstance(raw_participant, str) and re.fullmatch(r"par_[a-z2-7]{26}", raw_participant) else None
+        operator_summaries.append({
+            "result_id": result_id,
+            "participant": participant,
+            "attribution_available": attribution_available,
+            "attribution_kind": "self_declared" if attribution_available else None,
+        })
+    print(json.dumps({"ok": True, "briefing": briefing_id, "result_count": len(results), "operator_summaries": operator_summaries, "listStale": payload.get("listStale") is True}, indent=2))
+
+
+class OwnerInboxFetchError(Exception):
+    pass
+
+
+def inbox_request_bytes(url, headers):
+    try:
+        with OWNER_OPENER.open(urllib.request.Request(url, headers=headers), timeout=45) as response:
+            value = response.read(256_001)
+    except (urllib.error.HTTPError, OSError):
+        raise OwnerInboxFetchError()
+    if len(value) > 256_000:
+        raise OwnerInboxFetchError()
+    return value
+
+
+def normalized_display_text(value, limit):
+    if not isinstance(value, str):
+        return None
+    value = "".join(" " if unicodedata.category(char).startswith("C") else char for char in value)
+    value = " ".join(value.split())
+    if not value:
+        return None
+    if len(value) > limit:
+        value = value[:limit] + "…"
+    return html_lib.escape(value, quote=True)
+
+
+def owner_artifact_identity(receipt, briefing_id):
+    package = receipt.get("package")
+    if not isinstance(package, str) or not package:
+        fail("owner receipt has no verified local package")
+    try:
+        _root, _manifest_bytes, _briefing_bytes, _artifact_bytes, file_entry, briefing = load_package(package)
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        fail("owner receipt package is not valid")
+    if briefing.get("id") != briefing_id:
+        fail("owner receipt package does not match the requested Briefing")
+    artifacts = briefing.get("artifacts")
+    if not isinstance(artifacts, list) or len(artifacts) != 1 or not isinstance(artifacts[0], dict):
+        fail("owner receipt package has no single artifact identity")
+    artifact = artifacts[0]
+    expected = {key: artifact.get(key) for key in ("id", "uri", "mediaType", "rev")}
+    manifest_identity = {
+        "id": file_entry.get("artifactId"),
+        "uri": file_entry.get("uri"),
+        "mediaType": file_entry.get("mediaType"),
+        "rev": file_entry.get("rev"),
+    }
+    if expected != manifest_identity or not all(isinstance(value, str) and value for value in expected.values()):
+        fail("owner receipt package artifact identity is incoherent")
+    return expected
+
+
+def parse_inbox_result(briefing_id, expected_artifact, summary, review_bytes, result_bytes):
+    if not isinstance(summary, dict):
+        return None
+    result_id = summary.get("resultId")
+    participant = summary.get("participant")
+    if not isinstance(result_id, str) or not re.fullmatch(r"res_[a-z2-7]{26}", result_id):
+        return None
+    if not isinstance(participant, str) or not re.fullmatch(r"par_[a-z2-7]{26}", participant):
+        return None
+    try:
+        result = json.loads(result_bytes)
+        review = [json.loads(line) for line in review_bytes.decode("utf-8").splitlines() if line.strip()]
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(result, dict) or set(result) != {"type", "mode", "briefing", "artifact", "annotations", "actor"} or result.get("type") != "review-v1-result" or result.get("mode") != "feedback" or result.get("briefing") != briefing_id:
+        return None
+    annotations = result.get("annotations")
+    actor = result.get("actor")
+    artifact = result.get("artifact")
+    if not isinstance(annotations, list) or len(annotations) > 100 or annotations != review:
+        return None
+    if not isinstance(artifact, dict) or set(artifact) != {"id", "uri", "mediaType", "rev"} or artifact != expected_artifact:
+        return None
+    artifact_id = expected_artifact["id"]
+    if not isinstance(actor, str) or not actor.startswith("person:") or not actor.removeprefix("person:").strip():
+        return None
+    if isinstance(summary.get("actor"), str) and summary["actor"] != actor:
+        return None
+    rendered = []
+    for annotation in annotations:
+        allowed_annotation_keys = {"type", "id", "briefing", "by", "at", "target", "kind", "body", "selectors", "original", "proposed"}
+        if not isinstance(annotation, dict) or not set(annotation).issubset(allowed_annotation_keys) or annotation.get("type") != "Annotation" or annotation.get("briefing") != briefing_id or annotation.get("by") != actor or annotation.get("target") != artifact_id:
+            return None
+        if not isinstance(annotation.get("id"), str) or not 1 <= len(annotation["id"]) <= 256:
+            return None
+        kind = annotation.get("kind")
+        body = original = proposed = None
+        if kind == "comment":
+            if "original" in annotation or "proposed" in annotation:
+                return None
+            body = normalized_display_text(annotation.get("body"), 4096)
+            if body is None:
+                return None
+        elif kind == "suggestion":
+            if "body" in annotation:
+                return None
+            original = normalized_display_text(annotation.get("original"), 4096)
+            proposed = normalized_display_text(annotation.get("proposed"), 4096)
+            if original is None or proposed is None:
+                return None
+        else:
+            return None
+        quote = None
+        selectors = annotation.get("selectors", [])
+        if not isinstance(selectors, list) or len(selectors) > 16:
+            return None
+        for selector in selectors:
+            if not isinstance(selector, dict) or set(selector) - {"type", "exact", "prefix", "suffix"}:
+                return None
+            if selector.get("type") == "TextQuoteSelector":
+                quote = normalized_display_text(selector.get("exact"), 1024)
+                if quote:
+                    break
+        rendered.append((kind, quote, body, original, proposed))
+    actor_label = normalized_display_text(actor.removeprefix("person:"), 256)
+    if actor_label is None:
+        return None
+    return participant, actor_label, rendered
+
+
+def owner_inbox(args):
+    briefing_id = args.briefing
+    output = Path(args.output).expanduser().absolute()
+    try:
+        parent_mode = output.parent.lstat().st_mode
+    except OSError:
+        fail("Owner Inbox output parent must already exist")
+    if stat.S_ISLNK(parent_mode) or not stat.S_ISDIR(parent_mode):
+        fail("Owner Inbox output parent must be a regular directory, not a symlink")
+    if output.exists() or output.is_symlink():
+        fail("Owner Inbox output already exists; choose a new private snapshot path")
+    receipt = load_owner_receipt(briefing_id, args.state_dir)
+    expected_artifact = owner_artifact_identity(receipt, briefing_id)
+    endpoint = receipt.get("endpoint")
+    if not isinstance(endpoint, str) or not endpoint:
+        fail("owner receipt has no Relay endpoint")
+    endpoint = endpoint.rstrip("/")
+    headers = {**auth_headers(receipt), "Accept": "application/json"}
+    try:
+        listing = json.loads(inbox_request_bytes(endpoint + f"/api/briefing/{briefing_id}/results", headers))
+    except (OwnerInboxFetchError, UnicodeDecodeError, json.JSONDecodeError):
+        fail("Relay Owner Inbox could not read a valid Result list")
+    results = listing.get("results") if isinstance(listing, dict) else None
+    if not isinstance(results, list):
+        fail("Relay Owner Inbox received an invalid Result list")
+    if "listStale" in listing and not isinstance(listing["listStale"], bool):
+        fail("Relay Owner Inbox received an invalid stale marker")
+    list_stale = listing.get("listStale") is True
+    if len(results) > 100:
+        fail("Relay Owner Inbox Result list exceeds the count limit")
+
+    cards = []
+    valid_count = invalid_count = error_count = 0
+    display_size = 0
+    id_counts = {}
+    for summary in results:
+        result_id = summary.get("resultId") if isinstance(summary, dict) else None
+        if isinstance(result_id, str) and re.fullmatch(r"res_[a-z2-7]{26}", result_id):
+            id_counts[result_id] = id_counts.get(result_id, 0) + 1
+    for summary in results:
+        result_id = summary.get("resultId") if isinstance(summary, dict) else None
+        if not isinstance(result_id, str) or not re.fullmatch(r"res_[a-z2-7]{26}", result_id) or id_counts.get(result_id) != 1:
+            invalid_count += 1
+            cards.append('<article class="unavailable"><h2>Result unavailable</h2><p>This entry could not be validated.</p></article>')
+            continue
+        base = endpoint + f"/api/briefing/{briefing_id}/result/{result_id}"
+        try:
+            review_bytes = inbox_request_bytes(base + "/review.jsonl", headers)
+            result_bytes = inbox_request_bytes(base + "/result.json", headers)
+        except OwnerInboxFetchError:
+            error_count += 1
+            cards.append('<article class="unavailable"><h2>Result unavailable</h2><p>This entry could not be retrieved.</p></article>')
+            continue
+        parsed = parse_inbox_result(briefing_id, expected_artifact, summary, review_bytes, result_bytes)
+        if parsed is None:
+            invalid_count += 1
+            cards.append('<article class="unavailable"><h2>Result unavailable</h2><p>This entry could not be validated.</p></article>')
+            continue
+        participant, actor_label, annotations = parsed
+        annotation_html = []
+        for kind, quote, body, original, proposed in annotations:
+            quote_html = f'<blockquote>{quote}</blockquote>' if quote else ""
+            if kind == "suggestion":
+                content_html = f'<p><strong>Original</strong> {original}</p><p><strong>Proposed</strong> {proposed}</p>'
+            else:
+                content_html = f'<p>{body}</p>'
+            annotation_html.append(f'<section class="annotation"><h3>{kind.title()}</h3>{quote_html}{content_html}</section>')
+        card = (
+            '<article class="result">'
+            f'<p class="participant">Session participant · {participant}</p>'
+            f'<h2>{actor_label}</h2><p class="warning">Self-declared · unverified</p>'
+            + "".join(annotation_html) + '</article>'
+        )
+        if display_size + len(card) > 1_000_000:
+            invalid_count += 1
+            cards.append('<article class="unavailable"><h2>Result unavailable</h2><p>This entry exceeded the display limit.</p></article>')
+            continue
+        display_size += len(card)
+        cards.append(card)
+        valid_count += 1
+
+    stale_html = '<p class="stale">Result index may be stale; refresh this snapshot before treating it as complete.</p>' if list_stale else ""
+    counts_html = f'<p>{len(results)} listed · {valid_count} validated · {invalid_count} invalid · {error_count} unavailable</p>'
+    document = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Owner Results Inbox</title><style>
+body{font:16px system-ui,sans-serif;max-width:880px;margin:40px auto;padding:0 20px;background:#f5f5f4;color:#1c1917}
+article{background:white;border:1px solid #d6d3d1;border-radius:12px;padding:20px;margin:18px 0}.participant{font-family:monospace}.warning,.stale{color:#9a3412;font-weight:700}
+.annotation{border-top:1px solid #e7e5e4;margin-top:16px}blockquote{border-left:4px solid #a8a29e;margin-left:0;padding-left:12px;color:#57534e}.unavailable{color:#57534e}
+</style></head><body><header><h1>Owner Results Inbox</h1><p>Human-facing feedback snapshot. Participant values distinguish review sessions; they are not verified people.</p></header>""" + stale_html + counts_html + "".join(cards) + "</body></html>\n"
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{output.name}.", dir=str(output.parent))
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as temporary:
+            temporary.write(document)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.link(temporary_name, output)
+        os.unlink(temporary_name)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(temporary_name)
+        except OSError:
+            pass
+        raise
+    print(json.dumps({
+        "ok": True, "briefing": briefing_id, "result_count": len(results),
+        "valid_result_count": valid_count, "invalid_result_count": invalid_count,
+        "error_count": error_count, "list_stale": list_stale, "output": str(output),
+    }))
+
+
+def write_private_result_directory(root, review, result):
+    root = Path(root).expanduser().absolute()
+    try:
+        parent_mode = root.parent.lstat().st_mode
+    except OSError:
+        fail("Relay Result output parent must already exist")
+    if stat.S_ISLNK(parent_mode) or not stat.S_ISDIR(parent_mode) or root.exists() or root.is_symlink():
+        fail("Relay Result output must be a new directory under a regular parent")
+    temporary = Path(tempfile.mkdtemp(prefix=f".{root.name}.", dir=str(root.parent)))
+    try:
+        os.chmod(temporary, 0o700)
+        for name, value in (("review.jsonl", review), ("result.json", result)):
+            target = temporary / name
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as output:
+                output.write(value)
+                output.flush()
+                os.fsync(output.fileno())
+        os.rename(temporary, root)
+    except BaseException:
+        for candidate in temporary.glob("*"):
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
+        try:
+            temporary.rmdir()
+        except OSError:
+            pass
+        raise
+    return root
 
 
 def pull_result(args):
     briefing_id = args.briefing; result_id = args.result_id
     if not BRIEFING_ID.fullmatch(briefing_id) or not re.fullmatch(r"res_[a-z2-7]{26}", result_id):
         fail("valid Briefing and Result ids are required")
-    state = owner_state_dir(args.state_dir); receipt_path = state / "owners" / f"{briefing_id}.json"
-    if not receipt_path.exists(): fail("owner receipt is required to pull Relay Results")
-    receipt = load_json(receipt_path, "owner receipt"); endpoint = args.endpoint.rstrip("/")
-    headers = auth_headers(receipt)
-    review = fetch_bytes_request(endpoint + f"/api/briefing/{briefing_id}/result/{result_id}/review.jsonl", headers)
-    result = fetch_bytes_request(endpoint + f"/api/briefing/{briefing_id}/result/{result_id}/result.json", headers)
-    payload = json.loads(result)
-    if payload.get("type") != "review-v1-result" or payload.get("mode") != "feedback" or payload.get("briefing") != briefing_id:
-        fail("pulled Result is not a feedback-only Review v1 Result for this Briefing")
-    root = Path(args.output_dir).resolve(); root.mkdir(parents=True, exist_ok=True)
-    (root / "review.jsonl").write_bytes(review); (root / "result.json").write_bytes(result)
-    print(json.dumps({"ok": True, "briefing": briefing_id, "result_id": result_id, "review_sha256": hashlib.sha256(review).hexdigest(), "result_sha256": hashlib.sha256(result).hexdigest(), "output_dir": str(root)}, indent=2))
-
-
-def fetch_bytes_request(url, headers):
+    receipt = load_owner_receipt(briefing_id, args.state_dir)
+    expected_artifact = owner_artifact_identity(receipt, briefing_id)
+    endpoint = receipt["endpoint"]
+    headers = {**auth_headers(receipt), "Accept": "application/json"}
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=45) as response: return response.read()
-    except urllib.error.HTTPError as exc: fail(f"Relay Result pull refused ({exc.code})")
-    except OSError as exc: fail(f"Relay Result pull failed: {exc}")
+        listing = json.loads(inbox_request_bytes(endpoint + f"/api/briefing/{briefing_id}/results", headers))
+    except (OwnerInboxFetchError, UnicodeDecodeError, json.JSONDecodeError):
+        fail("Relay Result pull could not read a valid Result list")
+    results = listing.get("results") if isinstance(listing, dict) else None
+    matches = [entry for entry in results if isinstance(entry, dict) and entry.get("resultId") == result_id] if isinstance(results, list) else []
+    if len(matches) != 1:
+        fail("Relay Result pull did not find one matching Result summary")
+    base = endpoint + f"/api/briefing/{briefing_id}/result/{result_id}"
+    try:
+        review = inbox_request_bytes(base + "/review.jsonl", headers)
+        result = inbox_request_bytes(base + "/result.json", headers)
+    except OwnerInboxFetchError:
+        fail("Relay Result pull failed")
+    if parse_inbox_result(briefing_id, expected_artifact, matches[0], review, result) is None:
+        fail("pulled Result is not a validated coherent feedback-only Review v1 Result for this Briefing")
+    root = write_private_result_directory(args.output_dir, review, result)
+    print(json.dumps({"ok": True, "briefing": briefing_id, "result_id": result_id, "review_sha256": hashlib.sha256(review).hexdigest(), "result_sha256": hashlib.sha256(result).hexdigest(), "output_dir": str(root)}, indent=2))
 
 
 def multipart_body(parts):
@@ -502,11 +892,12 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser("package"); p.add_argument("--briefing", required=True); p.add_argument("--output-dir", required=True); p.set_defaults(fn=package)
     pub = commands.add_parser("publish"); pub.add_argument("--package", required=True); pub.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); pub.add_argument("--state-dir"); pub.add_argument("--dry-run", action="store_true"); pub.set_defaults(fn=publish)
-    create_p = commands.add_parser("create-room"); create_p.add_argument("--briefing", required=True); create_p.add_argument("--endpoint"); create_p.add_argument("--state-dir"); create_p.set_defaults(fn=create_room)
+    create_p = commands.add_parser("create-room"); create_p.add_argument("--briefing", required=True); create_p.add_argument("--state-dir"); create_p.set_defaults(fn=create_room)
     disable_p = commands.add_parser("disable-room"); disable_p.add_argument("--briefing", required=True); disable_p.add_argument("--room-ref", required=True); disable_p.add_argument("--state-dir"); disable_p.set_defaults(fn=disable_room)
     revoke_p = commands.add_parser("revoke-room-session"); revoke_p.add_argument("--briefing", required=True); revoke_p.add_argument("--room-ref", required=True); revoke_p.add_argument("--session-id", required=True); revoke_p.add_argument("--state-dir"); revoke_p.set_defaults(fn=revoke_room_session)
-    owner_p = commands.add_parser("results"); owner_p.add_argument("--briefing", required=True); owner_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); owner_p.add_argument("--state-dir"); owner_p.set_defaults(fn=owner_results)
-    pull_p = commands.add_parser("pull-result"); pull_p.add_argument("--briefing", required=True); pull_p.add_argument("--result-id", required=True); pull_p.add_argument("--output-dir", required=True); pull_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); pull_p.add_argument("--state-dir"); pull_p.set_defaults(fn=pull_result)
+    owner_p = commands.add_parser("results"); owner_p.add_argument("--briefing", required=True); owner_p.add_argument("--state-dir"); owner_p.set_defaults(fn=owner_results)
+    inbox_p = commands.add_parser("owner-inbox"); inbox_p.add_argument("--briefing", required=True); inbox_p.add_argument("--output", required=True); inbox_p.add_argument("--state-dir"); inbox_p.set_defaults(fn=owner_inbox)
+    pull_p = commands.add_parser("pull-result"); pull_p.add_argument("--briefing", required=True); pull_p.add_argument("--result-id", required=True); pull_p.add_argument("--output-dir", required=True); pull_p.add_argument("--state-dir"); pull_p.set_defaults(fn=pull_result)
     submit_p = commands.add_parser("submit"); submit_p.add_argument("--briefing", required=True); submit_p.add_argument("--review", required=True); submit_p.add_argument("--result", required=True); submit_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); submit_p.add_argument("--state-dir"); submit_p.add_argument("--dry-run", action="store_true"); submit_p.set_defaults(fn=submit)
     result_p = commands.add_parser("build-feedback-result"); result_p.add_argument("--briefing", required=True); result_p.add_argument("--review", required=True); result_p.add_argument("--actor", required=True); result_p.add_argument("--output", required=True); result_p.set_defaults(fn=build_feedback_result)
     fetch_p = commands.add_parser("fetch"); fetch_p.add_argument("--briefing", required=True); fetch_p.add_argument("--endpoint", default="https://subspace-relay-staging.netlify.app"); fetch_p.add_argument("--output-dir", required=True); fetch_p.set_defaults(fn=fetch)

@@ -138,12 +138,31 @@ verify Briefing
 The Room URL is a capability. The plugin does not print, post, fan out, or automatically deliver it. A Room is controlled through a private local `room_ref`:
 
 - `subspace_review_gate_relay_create_room` creates a Room and returns a non-network `room_ref`.
-- `subspace_review_gate_relay_results` returns safe owner-visible Result summaries.
-- `subspace_review_gate_relay_pull_result` writes a verified feedback-mode Result locally and reports its digests.
+- `subspace_review_gate_relay_results` returns agent-safe structural Result summaries. It withholds reviewer labels and feedback text from agent context.
+- `subspace_review_gate_relay_owner_inbox` writes a private local HTML snapshot for the human owner. The snapshot contains only validated, escaped, length-capped feedback; it is script-free, marks labels self-declared/unverified, and returns no free text in the tool response.
+- `subspace_review_gate_relay_pull_result` writes a validated coherent feedback-mode Result locally and reports locally computed digests.
 - `subspace_review_gate_relay_disable_room` disables the Room.
 - `subspace_review_gate_relay_revoke_room_session` revokes an arrived reviewer session without disabling sibling sessions, but requires an already supplied session ID.
 
 Session IDs are not discoverable by this plugin. Do not guess, derive, log, or request them through a reviewer browser. Use the revoke control only when an owner already has a session ID through an approved Relay owner channel.
+
+To generate a human snapshot without placing reviewer text in agent output:
+
+```bash
+subspace-review-relay owner-inbox \
+  --briefing briefing:0123456789abcdef0123456789abcdef \
+  --output .review/owner-inbox.html
+```
+
+The output parent must already exist and the destination must be new. The command uses only the endpoint frozen in the private owner receipt, refuses redirects, and writes the snapshot mode `0600`. Open the resulting file directly as a human; do not read or summarize it into an agent context by default.
+
+Owner operations now require the profile-local state root and `owners/` directory to be private `0700`, and each receipt to be `0600`. Before using a receipt created by an older plugin version, tighten it once without reading its contents:
+
+```bash
+chmod 700 "${HERMES_HOME:-$HOME/.hermes}/subspace-review-gate/relay" \
+  "${HERMES_HOME:-$HOME/.hermes}/subspace-review-gate/relay/owners"
+chmod 600 "${HERMES_HOME:-$HOME/.hermes}/subspace-review-gate/relay/owners/"*.json
+```
 
 The browser receives no owner device secret, owner receipt, or workflow authority. Relay feedback remains evidence; it does not become a Resolution or workflow verdict automatically.
 

@@ -35,6 +35,7 @@ class PluginRegistrationTests(unittest.TestCase):
             "subspace_review_gate_relay_fetch",
             "subspace_review_gate_relay_annotations",
             "subspace_review_gate_relay_results",
+            "subspace_review_gate_relay_owner_inbox",
             "subspace_review_gate_relay_pull_result",
             "subspace_review_gate_relay_create_room",
             "subspace_review_gate_relay_disable_room",
@@ -50,6 +51,28 @@ class PluginRegistrationTests(unittest.TestCase):
         self.assertEqual(parameters["required"], ["briefing", "result_id", "output_dir"])
         self.assertIn("state_dir", parameters["properties"])
         self.assertIn("feedback-only", entry["schema"]["description"])
+
+    def test_owner_inbox_is_local_private_and_owner_tools_have_no_endpoint_override(self):
+        ctx = Context()
+        PLUGIN.register(ctx)
+        owner_names = (
+            "subspace_review_gate_relay_results",
+            "subspace_review_gate_relay_owner_inbox",
+            "subspace_review_gate_relay_pull_result",
+            "subspace_review_gate_relay_create_room",
+            "subspace_review_gate_relay_disable_room",
+            "subspace_review_gate_relay_revoke_room_session",
+        )
+        for name in owner_names:
+            entry = next(tool for tool in ctx.tools if tool["name"] == name)
+            parameters = entry["schema"]["parameters"]
+            self.assertFalse(parameters["additionalProperties"])
+            self.assertNotIn("endpoint", parameters["properties"])
+            self.assertIn("Briefing ID", parameters["properties"]["briefing"]["description"])
+        inbox = next(tool for tool in ctx.tools if tool["name"] == "subspace_review_gate_relay_owner_inbox")
+        self.assertEqual(inbox["schema"]["parameters"]["required"], ["briefing", "output"])
+        self.assertIn("0600", inbox["schema"]["description"])
+        self.assertIn("never contains reviewer labels", inbox["schema"]["description"])
 
     def test_room_controls_require_non_network_room_ref(self):
         ctx = Context()
@@ -68,6 +91,7 @@ class PluginRegistrationTests(unittest.TestCase):
         tools = (ROOT / "plugin.yaml").read_text()
         for name in (
             "subspace_review_gate_relay_results",
+            "subspace_review_gate_relay_owner_inbox",
             "subspace_review_gate_relay_pull_result",
             "subspace_review_gate_relay_create_room",
             "subspace_review_gate_relay_disable_room",

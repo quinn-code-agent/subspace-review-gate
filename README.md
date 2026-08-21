@@ -45,7 +45,9 @@ verify and publish package
 
 The plugin is the owner client. Relay owns the Room, browser session, cookie/CSRF boundary, and immutable Result storage. Start with `subspace_review_gate_relay_package` and `subspace_review_gate_relay_publish`, then create the Room. The **Room URL is a capability**, not a status link. The plugin does not host a browser. It does not create a Resolution or automatically deliver a Room URL.
 
-Owner controls are `subspace_review_gate_relay_create_room`, `subspace_review_gate_relay_results`, `subspace_review_gate_relay_pull_result`, `subspace_review_gate_relay_disable_room`, and `subspace_review_gate_relay_revoke_room_session`. A private `room_ref` can disable a Room. The plugin can revoke an arrived reviewer session only when an already supplied session ID is available; session IDs are not discoverable by this plugin.
+Owner controls are `subspace_review_gate_relay_create_room`, `subspace_review_gate_relay_results`, `subspace_review_gate_relay_owner_inbox`, `subspace_review_gate_relay_pull_result`, `subspace_review_gate_relay_disable_room`, and `subspace_review_gate_relay_revoke_room_session`. A private `room_ref` can disable a Room. The plugin can revoke an arrived reviewer session only when an already supplied session ID is available; session IDs are not discoverable by this plugin.
+
+`relay_results` is agent-facing and returns structural metadata only: Result id, opaque participant correlation token, and whether self-declared attribution exists. It never returns reviewer labels or feedback text. `relay_owner_inbox` is the separate human-facing path: it validates the local package and pulled feedback, then writes one private `0600`, self-contained, script-free HTML snapshot such as `owner-inbox.html` with escaped and length-capped reviewer labels and annotations. The HTML marks attribution as self-declared and unverified. It is a local snapshot, not a browser server, and it does not enable reviewer shared feedback.
 
 ### Legacy local Relay Web viewer
 

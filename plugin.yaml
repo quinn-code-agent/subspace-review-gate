@@ -14,6 +14,7 @@ provides_tools:
   - subspace_review_gate_relay_fetch
   - subspace_review_gate_relay_annotations
   - subspace_review_gate_relay_results
+  - subspace_review_gate_relay_owner_inbox
   - subspace_review_gate_relay_pull_result
   - subspace_review_gate_relay_create_room
   - subspace_review_gate_relay_disable_room

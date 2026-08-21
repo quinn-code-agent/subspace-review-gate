@@ -109,21 +109,24 @@ def relay_annotations(args, **_):
 
 def relay_results(args, **_):
     command = ["results", "--briefing", args["briefing"]]
-    if args.get("endpoint"): command.extend(["--endpoint", args["endpoint"]])
+    if args.get("state_dir"): command.extend(["--state-dir", args["state_dir"]])
+    return relay_call(*command)
+
+
+def relay_owner_inbox(args, **_):
+    command = ["owner-inbox", "--briefing", args["briefing"], "--output", args["output"]]
     if args.get("state_dir"): command.extend(["--state-dir", args["state_dir"]])
     return relay_call(*command)
 
 
 def relay_pull_result(args, **_):
     command = ["pull-result", "--briefing", args["briefing"], "--result-id", args["result_id"], "--output-dir", args["output_dir"]]
-    if args.get("endpoint"): command.extend(["--endpoint", args["endpoint"]])
     if args.get("state_dir"): command.extend(["--state-dir", args["state_dir"]])
     return relay_call(*command)
 
 
 def relay_create_room(args, **_):
     command = ["create-room", "--briefing", args["briefing"]]
-    if args.get("endpoint"): command.extend(["--endpoint", args["endpoint"]])
     if args.get("state_dir"): command.extend(["--state-dir", args["state_dir"]])
     return relay_call(*command)
 
@@ -141,7 +144,7 @@ def relay_revoke_room_session(args, **_):
 
 
 def schema(name, description, properties, required):
-    return {"name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": required}}
+    return {"name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": required, "additionalProperties": False}}
 
 
 def register(ctx):
@@ -162,6 +165,7 @@ def register(ctx):
     ctx.register_tool(name="subspace_review_gate_close_public_review", toolset="subspace_review_gate", emoji="🛑", check_fn=available,
         schema=schema("subspace_review_gate_close_public_review", "Stop the managed public Human Review proxy and temporary Cloudflare tunnel.", runtime_props, []), handler=close_public_review)
     relay_endpoint = {"endpoint": {"type": "string", "description": "Relay base URL; defaults to the shared staging endpoint."}}
+    owner_common = {"briefing": {"type": "string", "description": "Briefing ID (briefing:<32 lowercase hex>), not a file path."}, "state_dir": {"type": "string", "description": "Optional private owner-receipt directory."}}
     ctx.register_tool(name="subspace_review_gate_relay_package", toolset="subspace_review_gate", emoji="📦", check_fn=available,
         schema=schema("subspace_review_gate_relay_package", "Build a Relay-compatible package from a verified immutable Briefing. Phase 1 feedback transport only.", {**common, "output_dir": {"type": "string"}}, ["briefing", "output_dir"]), handler=relay_package)
     ctx.register_tool(name="subspace_review_gate_relay_publish", toolset="subspace_review_gate", emoji="🚀", check_fn=available,
@@ -171,13 +175,15 @@ def register(ctx):
     ctx.register_tool(name="subspace_review_gate_relay_annotations", toolset="subspace_review_gate", emoji="📝", check_fn=available,
         schema=schema("subspace_review_gate_relay_annotations", "Convert Human Review comments to portable Subspace Annotation JSONL; no Resolution is emitted.", {**common, "feedback": {"type": "string"}, "output": {"type": "string"}, "reviewer": {"type": "string"}}, ["briefing", "feedback", "output"]), handler=relay_annotations)
     ctx.register_tool(name="subspace_review_gate_relay_results", toolset="subspace_review_gate", emoji="📨", check_fn=available,
-        schema=schema("subspace_review_gate_relay_results", "Owner-only pull of Relay Result summaries. Results remain feedback-only evidence and do not route a workflow.", {**common, **relay_endpoint, "state_dir": {"type": "string"}}, ["briefing"]), handler=relay_results)
+        schema=schema("subspace_review_gate_relay_results", "Owner-only structural Relay Result summaries. Reviewer free text is withheld from agent context; attribution remains self-declared and non-binding.", owner_common, ["briefing"]), handler=relay_results)
+    ctx.register_tool(name="subspace_review_gate_relay_owner_inbox", toolset="subspace_review_gate", emoji="🗂️", check_fn=available,
+        schema=schema("subspace_review_gate_relay_owner_inbox", "Write a private local 0600 human-facing HTML snapshot of validated Relay feedback. The tool response never contains reviewer labels or comments.", {**owner_common, "output": {"type": "string", "description": "Local HTML file path; written atomically and kept private."}}, ["briefing", "output"]), handler=relay_owner_inbox)
     ctx.register_tool(name="subspace_review_gate_relay_pull_result", toolset="subspace_review_gate", emoji="📥", check_fn=available,
-        schema=schema("subspace_review_gate_relay_pull_result", "Owner-only pull of one feedback-only Relay Result: validates its Briefing and mode, then reports SHA-256 digests. This does not create a Resolution or change workflow state.", {**common, "result_id": {"type": "string"}, "output_dir": {"type": "string"}, **relay_endpoint, "state_dir": {"type": "string", "description": "Optional private owner-receipt directory."}}, ["briefing", "result_id", "output_dir"]), handler=relay_pull_result)
-    room_props = {**common, **relay_endpoint, "state_dir": {"type": "string", "description": "Optional private owner-receipt directory."}}
+        schema=schema("subspace_review_gate_relay_pull_result", "Owner-only pull of one validated coherent feedback-only Relay Result; computes local SHA-256 digests. This does not create a Resolution or change workflow state.", {**owner_common, "result_id": {"type": "string"}, "output_dir": {"type": "string"}}, ["briefing", "result_id", "output_dir"]), handler=relay_pull_result)
+    room_props = owner_common
     ctx.register_tool(name="subspace_review_gate_relay_create_room", toolset="subspace_review_gate", emoji="🏠", check_fn=available,
         schema=schema("subspace_review_gate_relay_create_room", "Create a Relay Review Room for an already-published Briefing using its private owner receipt. This does not create an invitation or a Resolution.", room_props, ["briefing"]), handler=relay_create_room)
     ctx.register_tool(name="subspace_review_gate_relay_disable_room", toolset="subspace_review_gate", emoji="🛑", check_fn=available,
-        schema=schema("subspace_review_gate_relay_disable_room", "Disable a Relay Review Room using its private non-network room reference and owner receipt. This does not expose the Room capability or write a workflow verdict.", {**common, "room_ref": {"type": "string"}, "state_dir": {"type": "string", "description": "Optional private owner-receipt directory."}}, ["briefing", "room_ref"]), handler=relay_disable_room)
+        schema=schema("subspace_review_gate_relay_disable_room", "Disable a Relay Review Room using its private non-network room reference and owner receipt. This does not expose the Room capability or write a workflow verdict.", {**owner_common, "room_ref": {"type": "string"}}, ["briefing", "room_ref"]), handler=relay_disable_room)
     ctx.register_tool(name="subspace_review_gate_relay_revoke_room_session", toolset="subspace_review_gate", emoji="🚫", check_fn=available,
-        schema=schema("subspace_review_gate_relay_revoke_room_session", "Revoke one arrived reviewer session using a private non-network Room reference and owner receipt. This does not expose a Room capability or write workflow state.", {**common, "room_ref": {"type": "string"}, "session_id": {"type": "string"}, "state_dir": {"type": "string", "description": "Optional private owner-receipt directory."}}, ["briefing", "room_ref", "session_id"]), handler=relay_revoke_room_session)
+        schema=schema("subspace_review_gate_relay_revoke_room_session", "Revoke one arrived reviewer session using a private non-network Room reference and owner receipt. This does not expose a Room capability or write workflow state.", {**owner_common, "room_ref": {"type": "string"}, "session_id": {"type": "string"}}, ["briefing", "room_ref", "session_id"]), handler=relay_revoke_room_session)
