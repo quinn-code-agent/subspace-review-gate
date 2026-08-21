@@ -225,3 +225,36 @@ Cycle 2 closes the five validation findings: future authoritative expiry, atomic
 ### Residuals
 
 No blocking residual remains within cycle-2 watcher lifecycle or legacy fixture compatibility scope. Stop without a durable process record deliberately returns `shutdown_verified: false`; an unproven or PID-reused process is never signalled. Remote and runtime operations remain explicitly unperformed.
+
+## Stage Report: validation (cycle 2)
+- FAILED: Candidate `24df29f2f2240372976b15963957ec041454141b` still does not prove the full watcher command before signalling: `_pid_is_watcher` accepts an unrelated Python sleeper when the expected Relay path, subcommand, flags, values, and nonce are merely appended to its argv, and stop then sends SIGTERM to that unrelated PID.
+  Evidence for AC-4 and AC-5: an independent local adversarial probe reported `unrelated_classified_as_watcher: true` and `unrelated_process_was_signalled: true`; the stop result still had `shutdown_verified: false`. This refutes the required full-command/PID-reuse refusal and makes safe watcher termination a blocking failure.
+- DONE: The remaining cycle-2 consent, private-state, transport, immutable feedback, origin, and dedupe corrections reproduced successfully: expired authoritative expiry refuses without an operation cache; replay re-evaluates expiry; owner/Room/cursor/operation/readiness/process records use the common private-file checks; listed and embedded Result IDs must match; origin/thread/outbox cannot be rebound; durable event ID replay emits no duplicate; credential-bearing redirects and changed origins refuse; and readiness follows validated binding state.
+  Evidence for AC-1, AC-2, AC-4, and AC-5: `tests.test_relay_consent` passed 11/11, including the focused clear-Yes, expired-expiry, redirect, Result-ID, rebinding, dedupe, readiness/reuse, and stop cases. The independent private-state probe refused mode `0644`, symlink, and directory inputs and observed atomic inode replacement to a regular `0600` file.
+- DONE: Repository ownership and compatibility remain intact: the duplicate Hermes Web viewer surfaces stay removed, plugin/owner-client tools and docs remain present, and all required focused/full/compile/diff gates pass on the exact candidate.
+  Evidence for AC-3 and AC-5: `tests.test_relay` passed 14/14, full discovery passed 56/56, `py_compile` passed, both correction-range and clean-worktree diff checks passed, and complete diff inspection from `ef3ef746` through candidate HEAD found only `__init__.py`, `bin/subspace-review-relay`, the entity receipt, and focused relay tests changed.
+
+### Summary
+
+REJECT. Exact candidate `24df29f2f2240372976b15963957ec041454141b` closes the expiry, private-state, immutable Result, origin/outbox, dedupe, redirect, readiness, and ordinary idempotent lifecycle findings, but the process-identity predicate is not a full-command proof and can signal an unrelated synthetic process whose argv contains the expected tokens. No implementation code was changed in validation; only this report was added.
+
+### Commands and results
+
+- `python3 -m unittest tests.test_relay_consent -v` — PASS, 11 tests.
+- `python3 -m unittest tests.test_relay -v` — PASS, 14 tests.
+- `python3 -m unittest discover -s tests -v` — PASS, 56 tests.
+- `python3 -m py_compile __init__.py bin/subspace-review-gate bin/subspace-review-relay bin/subspace-review-runtime tests/test_relay.py tests/test_relay_consent.py` — PASS.
+- `git diff --check ef3ef746..HEAD && git diff --check && git diff --exit-code HEAD -- .` — PASS before this report edit; candidate worktree was clean.
+- `git diff --find-renames --find-copies --name-status ef3ef746..HEAD` plus complete per-file correction-diff inspection — 5 files, 604 insertions, 64 deletions; production changes are confined to plugin watcher lifecycle and Relay adapter hardening, with tests and state receipt updates.
+- Ownership cleanup check for absent `web/`, `bin/subspace-relay-web`, `tests/test_web.py`, and `design-prototypes/relay-web-prototype.html`, plus full `4ee685f9..HEAD` name-status review — PASS; owner-client tools, manifest, README, setup, architecture, and skill surfaces remain.
+- Ephemeral independent local probe (removed after execution) — atomic private replacement produced a regular mode-`0600` file with a changed inode; mode-`0644`, symlink, and directory private-state reads refused; forged extra-payload argv was misclassified as the watcher and the unrelated synthetic sleeper received SIGTERM.
+
+### Finding and residuals
+
+1. Blocking: `_pid_is_watcher` checks token membership and first flag values but does not compare an exact expected argv or executable identity. A different Python program can carry the expected Relay tokens as inert extra arguments, pass classification, and be signalled by `relay_stop_feedback_watch`. Build one canonical expected argv/fingerprint, require exact executable and argument-vector equality (with the persisted nonce), and add a red test proving extra prefix/payload/suffix argv and PID reuse never receive a signal.
+2. Positive residual: stop correctly withholds `shutdown_verified` when exit is not proven, but that post-signal result does not undo an unsafe signal already sent.
+3. Scope residual: no real Relay publication, push, PR, merge, release, deploy, or runtime apply was performed; the adversarial signal targeted only a validator-owned synthetic sleeper.
+
+### Recommendation
+
+REJECT and return to implementation for exact executable/full-argv process proof before any signal. Re-run the focused 11-test consent suite, 14-test relay suite, 56-test full suite, compile/diff gates, and an independent extra-argv/PID-reuse no-signal probe against the next exact candidate SHA.
