@@ -291,3 +291,38 @@ Cycle 3 closes the remaining unsafe-signal finding by persisting and proving exa
 ### Residuals
 
 No blocking residual remains in the assigned exact-process-identity correction. Unsupported operating systems fail closed because no exact kernel argv boundary reader is available. No remote or runtime operation was performed.
+
+## Stage Report: validation (cycle 3)
+- DONE: The exact clear-Yes journey and all prior fail-closed corrections pass on branch HEAD `5df2727065e308bfb92956bea41d65376645565d` (implementation code `344539e0c569702ccc8af548a80644d8f57960b9`): ambiguous/unknown consent and unsupported or expired capability inputs refuse before publication, first success returns only validated `room_url` plus future `expires_at`, and identical replay makes zero additional network calls.
+  Evidence for AC-1, AC-2, and AC-5: `python3 -m unittest tests.test_relay_consent -v` passed 12/12, including the clear-Yes request-sequence/replay, ambiguous consent, unknown preflight, expired authoritative expiry, redirect, Result-ID, origin, dedupe, private-state, and lifecycle cases; the independent private-state probe also refused mode `0644`, symlink, and directory inputs and observed atomic regular-file replacement at mode `0600`.
+- DONE: The Room-scoped watcher proves exact immutable process and feedback binding: genuine start reached readiness, identical start reused the same PID, changed origin refused, explicit stop was verified by process exit, and every validator-owned forged process variant was refused without a signal.
+  Evidence for AC-2, AC-4, and AC-5: the independent local probe exercised extra prefix/payload/suffix, duplicate/reordered flags, changed interpreter, changed script, fingerprint mismatch, and reused PID; every case reported `classified_as_watcher: false`, `no_signal_refusal: true`, `shutdown_verified: false`, and `synthetic_still_alive: true`, while the genuine case reported readiness, same-PID reuse, binding refusal, verified shutdown, and exit all true. The 12-test consent suite also passed exact Room/Briefing/artifact/digest and listed/embedded Result-ID checks, safe origin-thread event shape, persistent cursor/outbox dedupe, redirect refusal, no raw feedback leakage, and no workflow advancement.
+- DONE: Repository ownership, compatibility, and complete-change review pass: duplicate Hermes Web viewer surfaces remain absent; plugin/owner-client tools, manifests, docs, and tests agree; focused/full suites, compilation, correction/full diff hygiene, and clean-worktree checks are green.
+  Evidence for AC-3 and AC-5: `python3 -m unittest tests.test_relay -v` passed 14/14; `python3 -m unittest discover -s tests -v` passed 57/57; `py_compile` passed; complete diff inspection from `4ee685f9dd52a782e03710c6413008b1aa6ca3ec` through HEAD covered all 19 changed files (1,410 insertions, 291 deletions), and correction inspection from `24df29f2f2240372976b15963957ec041454141b` covered only `__init__.py`, the entity report, and `tests/test_relay_consent.py`; all diff checks passed and the four legacy viewer paths were absent.
+
+### Summary
+
+PASS. Exact branch HEAD `5df2727065e308bfb92956bea41d65376645565d`, with implementation code at `344539e0c569702ccc8af548a80644d8f57960b9`, closes the cycle-2 unsafe-signal defect by requiring the persisted fingerprint and exact kernel executable/full argv boundaries before reuse or signal. Independent synthetic lifecycle attacks received no signal, genuine readiness/reuse/stop/exit succeeded, and all prior consent, expiry, private-state, redirect, immutable Result, origin, dedupe, repository-boundary, and compatibility checks remain green. Validation changed no implementation code and performed no real Relay publication or remote/runtime action.
+
+### Commands and results
+
+- `python3 .validation_cycle3_probe.py` (ephemeral validator-owned probe, removed after execution) — PASS; six forged identity/PID variants refused and remained alive, while genuine readiness, same-PID reuse, rebinding refusal, verified stop, and exit all succeeded.
+- Independent ephemeral private-state probe — PASS; atomic replacement changed inode, produced a regular mode-`0600` file, and mode-`0644`, symlink, and directory reads refused.
+- `python3 -m unittest tests.test_relay_consent -v` — PASS, 12 tests.
+- `python3 -m unittest tests.test_relay -v` — PASS, 14 tests.
+- `python3 -m unittest discover -s tests -v` — PASS, 57 tests.
+- `python3 -m py_compile __init__.py bin/subspace-review-gate bin/subspace-review-relay bin/subspace-review-runtime tests/test_relay.py tests/test_relay_consent.py` — PASS.
+- `git diff --check 24df29f2f2240372976b15963957ec041454141b..HEAD && git diff --check && git diff --exit-code HEAD -- .` — PASS before the report edit; candidate worktree was clean.
+- `git diff --check 4ee685f9dd52a782e03710c6413008b1aa6ca3ec..HEAD` plus complete per-file diff inspection — PASS; 19 files, 1,410 insertions, 291 deletions.
+- Ownership cleanup check — PASS: `web/`, `bin/subspace-relay-web`, `tests/test_web.py`, and `design-prototypes/relay-web-prototype.html` are absent; `bin/subspace-review-relay`, `plugin.yaml`, README/setup/architecture docs, and the owner-client skill remain present.
+
+### Findings and residuals
+
+1. No blocking finding reproduced. Exact executable/argv/fingerprint mismatches and stored-PID reuse fail closed before signal; the watcher also exits cleanly through its durable stop marker.
+2. Unsupported operating systems remain fail-closed because exact kernel argv-boundary inspection is implemented only for Darwin and Linux.
+3. The successful consent test fixture uses a fixed future expiry (`2026-09-20T08:00:00Z`) and will need a future-relative value before that date to avoid becoming a time-dependent test failure; this does not affect the production future-expiry check validated here.
+4. No push, PR, merge, release, deploy, runtime apply, real Relay publication, or workflow advancement occurred.
+
+### Recommendation
+
+PASS validation and present the candidate for the next workflow decision.
