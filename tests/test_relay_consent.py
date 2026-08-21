@@ -101,7 +101,7 @@ class RelayConsentOperationTests(unittest.TestCase):
                         "briefingId": json.loads(self.briefing.read_text())["id"],
                         "origin": f"http://127.0.0.1:{server.server_port}",
                         "roomUrl": "https://relay.example/room/safe-capability",
-                        "expiresAt": "2026-09-20T08:00:00.123Z",
+                        "expiresAt": "2099-09-20T08:00:00.123Z",
                     }, 201)
                 else:
                     inner.send_error(404)
@@ -137,7 +137,7 @@ class RelayConsentOperationTests(unittest.TestCase):
         self.assertEqual(payload, {
             "ok": True,
             "room_url": "https://relay.example/room/safe-capability",
-            "expires_at": "2026-09-20T08:00:00Z",
+            "expires_at": "2099-09-20T08:00:00Z",
         })
         self.assertEqual(json.loads(replay.stdout), payload)
         self.assertEqual([item[1] for item in seen], ["/api/capabilities/review-room", "/api/briefing", "/api/room"])
