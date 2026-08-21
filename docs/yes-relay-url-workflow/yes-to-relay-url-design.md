@@ -258,3 +258,36 @@ REJECT. Exact candidate `24df29f2f2240372976b15963957ec041454141b` closes the ex
 ### Recommendation
 
 REJECT and return to implementation for exact executable/full-argv process proof before any signal. Re-run the focused 11-test consent suite, 14-test relay suite, 56-test full suite, compile/diff gates, and an independent extra-argv/PID-reuse no-signal probe against the next exact candidate SHA.
+
+## Stage Report: implementation (cycle 3)
+- DONE: Replaced token-membership watcher classification with one canonical executable/full-argv identity constructed before spawn, SHA-256 fingerprinted, persisted in the private process record, and compared exactly against kernel-reported executable and argument boundaries before reuse, cleanup, or signalling.
+  Evidence for AC-4 and AC-5: exact candidate `344539e0c569702ccc8af548a80644d8f57960b9`; the focused lifecycle test verifies the persisted executable, complete argv, and recomputed fingerprint, then proves ordinary identical reuse and verified shutdown.
+- DONE: Added deterministic RED→GREEN coverage for the reproduced forged-extra-argv/PID-reuse attack; an unrelated Python sleeper with the complete expected watcher command appended as inert payload is refused on restart and stop, remains alive through both checks, and receives no signal.
+  Evidence for AC-4 and AC-5: before the production fix, `test_forged_extra_argv_and_reused_pid_are_never_signalled` errored because unsafe signalling produced no `no signal was sent` refusal; after the fix, the focused lifecycle plus adversarial command passed 2/2 and the consent suite passed 12/12.
+- DONE: Preserved all cycle-2 expiry, private-state, transport, Result-ID, origin/outbox, dedupe, readiness, idempotent reuse, and owner-client repository-boundary corrections with the required layered suites green.
+  Evidence for AC-1, AC-2, AC-3, AC-4, and AC-5: `tests.test_relay_consent` passed 12/12, `tests.test_relay` passed 14/14, full discovery passed 57/57, and `py_compile` passed for all required plugin, Relay, runtime, and focused-test files.
+- DONE: Kept the implementation leg local and side-effect free.
+  Evidence for AC-2 and AC-5: correction-range and clean-worktree diff checks passed; no push, PR, merge, release, deploy, runtime apply, or real Relay publication was performed.
+
+### Summary
+
+Cycle 3 closes the remaining unsafe-signal finding by persisting and proving exact kernel executable plus full argv equality instead of searching command tokens. Any prefix, payload, suffix, duplicate/reordered flag, changed interpreter/script, fingerprint mismatch, or reused PID changes the exact identity, so reuse and stop fail closed without signalling. All prior cycle-2 protections remain green.
+
+### Commands and results
+
+- `python3 -m unittest tests.test_relay_consent.RelayFeedbackWatcherTests.test_background_watcher_start_is_ready_idempotent_and_stop_is_verified tests.test_relay_consent.RelayFeedbackWatcherTests.test_forged_extra_argv_and_reused_pid_are_never_signalled -v` — PASS, 2 tests.
+- `python3 -m unittest tests.test_relay_consent -v` — PASS, 12 tests.
+- `python3 -m unittest tests.test_relay -v` — PASS, 14 tests.
+- `python3 -m unittest discover -s tests -v` — PASS, 57 tests.
+- `python3 -m py_compile __init__.py bin/subspace-review-gate bin/subspace-review-relay bin/subspace-review-runtime tests/test_relay.py tests/test_relay_consent.py` — PASS.
+- `git diff --check 24df29f2f2240372976b15963957ec041454141b..HEAD && git diff --check && git diff --exit-code HEAD -- .` — PASS before this report edit; candidate worktree was clean.
+
+### Files changed
+
+- `__init__.py` — canonical watcher command construction, Darwin/Linux kernel process identity reads, durable identity fingerprinting, exact comparison, and fail-closed live-PID restart handling.
+- `tests/test_relay_consent.py` — persisted-identity assertions and the real forged-extra-argv/PID-reuse no-signal regression.
+- `docs/yes-relay-url-workflow/yes-to-relay-url-design.md` — this cycle-3 implementation receipt.
+
+### Residuals
+
+No blocking residual remains in the assigned exact-process-identity correction. Unsupported operating systems fail closed because no exact kernel argv boundary reader is available. No remote or runtime operation was performed.
