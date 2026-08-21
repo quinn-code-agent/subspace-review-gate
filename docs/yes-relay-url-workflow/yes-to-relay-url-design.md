@@ -1,7 +1,7 @@
 ---
 id: pj0cksg00ebxtyvbaabv2kdz
 title: Yes to Relay URL design
-status: ideation
+status: implementation
 source: Captain commission resolution
 started: 2026-08-21T07:42:39Z
 completed:
@@ -23,6 +23,17 @@ gates:
                 digest: sha256:1c5ab49eadf262614e5953f7fbbe8a8b76cd26d00d604707145269d1200e771b
                 request-digest: sha256:5d9b27c3c55c75cc239cec96cfe056fd7b5a20b6cebfa1d9cbd89684538d3df5
                 room-ref: ./yes-to-relay-url-design/review/ideation/briefing-1
+              resolution:
+                type: Resolution
+                id: resolution:spacedock:pj0cksg00ebxtyvbaabv2kdz:ideation:1
+                briefing: briefing:pj0cksg00ebxtyvbaabv2kdz:ideation:attempt-1:revision-1
+                by: person:captain
+                at: "2026-08-21T08:49:57.414622Z"
+                decision: approve
+                reason: 接受設計；implementation 必須採用 Room-scoped 背景等待 feedback，不阻塞 Slack foreground；按 Result ID 去重，owner pull 並驗證 exact bytes，回原 thread 通知；Room disabled、Briefing expired、使用者停止或設定的一位 reviewer 首份有效 feedback 時停止，並具備 process restart 後 cursor recovery。
+              application:
+                target-stage: implementation
+                state: consumed
 ---
 
 Create and verify a reviewable architecture and UX design for a future high-level operation that turns a clear Yes into a safe Relay Room URL for one finished identifiable artifact. Stop at the design artifact confirmation gate; do not implement or deliver the feature.
